@@ -163,6 +163,30 @@ function rollPower(gen=1,r=Math.random){
 /*  ONE FOR ALL                                                          */
 /* ==================================================================== */
 const MAX_SLOTS=6,STEAL_BASE=3.2,GIVE_TIME=1.6,OFA_TIME=5.5,REACH=7;
+
+/* ---- combat ---- */
+const MOD_DMG={Homing:3,Lingering:3,Piercing:6,Chain:4,Splitting:3,
+               Delayed:2,Draining:5,Reflecting:3,Vortex:6,Unstable:8};
+const STRONG={Fire:"Ice",Ice:"Toxin",Toxin:"Earth",Earth:"Lightning",Lightning:"Water",
+              Water:"Fire",Metal:"Sound",Sound:"Shadow",Shadow:"Light",Light:"Shadow",
+              Wind:"Metal",Gravity:"Wind"};
+/* per-delivery: cooldown, damage scale, reach.
+   Tuned so every style drops an equal opponent in roughly 6-9s.
+   Terrain and Summon deal their damage repeatedly, so their per-hit number is low. */
+const ATK={
+  Projectile:{cd:0.55,dmg:0.42,range:60},   // steady, safe, ranged
+  Aura:      {cd:2.60,dmg:1.50,range:9 },   // burst, hits everyone around you
+  Touch:     {cd:0.90,dmg:0.75,range:4 },   // best dps, but you have to be in their face
+  Transform: {cd:15.0,dmg:0,   range:0 },   // not an attack — a buff
+  Terrain:   {cd:3.80,dmg:0.42,range:26},   // area denial, ticks every 0.85s for 6.5s
+  Summon:    {cd:9.00,dmg:0.50,range:34},   // autonomous, fires every 1.1s for 14s
+};
+const maxHpFor=p=>Math.round(70+p.level*2+(p.generation-1)*8);
+function dmgOf(p,mode,targetEls=[]){
+  let d=(p.potency*0.34+p.actMo.reduce((s,m)=>s+(MOD_DMG[m]||0),0))*(ATK[mode]?.dmg??1);
+  if(p.actEl.some(e=>targetEls.includes(STRONG[e])))d*=1.4;
+  return d*(0.88+Math.random()*0.24);
+}
 /* ofa: only ONE person in a world holds One For All. The host starts with it.
    Without it you have your own power and can give it away — but you cannot
    take, and you cannot fuse. */
@@ -240,6 +264,28 @@ function handleNet(m){
       r.target.set(m.x,m.y,m.z);r.yaw=m.yaw;r.heldN=m.held;r.moving=m.mv;r.ofa=!!m.ofa;
       if(m.power)r.power=Power.from(m.power);break;}
     case"shot":spawnShot(new THREE.Vector3(m.x,m.y,m.z),new THREE.Vector3(m.dx,m.dy,m.dz),m.c,false);break;
+    case"dmg":{if(m.to!==NET.id)break;takeDamage(m.n,m.byName);break;}
+    case"aura":{const at=new THREE.Vector3(m.x,m.y+1,m.z);
+      const w=new THREE.Mesh(new THREE.SphereGeometry(1,14,10),new THREE.MeshBasicMaterial(
+        {color:m.c,transparent:true,opacity:0.5,side:THREE.DoubleSide,depthWrite:false}));
+      w.position.copy(at);scene.add(w);fx.push({o:w,life:0.5,max:0.5,kind:"wave",R:m.r});
+      impact(at,m.c);break;}
+    case"touch":{const at=new THREE.Vector3(m.x,m.y,m.z);
+      const sl=new THREE.Mesh(new THREE.TorusGeometry(1.15,0.13,5,14,Math.PI*1.1),
+        new THREE.MeshBasicMaterial({color:m.c,transparent:true,depthWrite:false}));
+      sl.position.copy(at);sl.lookAt(camera.position);scene.add(sl);
+      fx.push({o:sl,life:0.24,max:0.24,kind:"slash"});break;}
+    case"terrain":{const at=new THREE.Vector3(m.x,m.y,m.z);
+      const disc=new THREE.Mesh(new THREE.CircleGeometry(3.6,20),new THREE.MeshBasicMaterial(
+        {color:m.c1,transparent:true,opacity:0.45,depthWrite:false}));
+      disc.rotation.x=-Math.PI/2;disc.position.copy(at);scene.add(disc);
+      const sp=new THREE.Mesh(new THREE.ConeGeometry(0.9,2.2,6),new THREE.MeshBasicMaterial(
+        {color:m.c2,transparent:true,opacity:0.8,depthWrite:false}));
+      sp.position.copy(at).add(new THREE.Vector3(0,1.1,0));scene.add(sp);
+      hazards.push({disc,spike:sp,pos:at,r:3.6,life:6.5,tick:0,color:m.c1,mine:false});break;}
+    case"tf":{const r=remotes.get(m.from);if(r){r.tfT=9;
+      impact(r.char.group.position.clone().add(new THREE.Vector3(0,1.1,0)),m.c);}break;}
+    case"summon":break;
     case"beam":{const r=remotes.get(m.from);if(!r)break;r.beamP=m.p;r.beamKind=m.kind;break;}
     case"npcTaken":{const n=npcs[m.i];if(n)npcRemove(n,m.el,m.byName);break;}
     case"npcGiven":{const n=npcs[m.i];if(!n)break;n.powers.push(Power.from(m.power));
@@ -467,7 +513,8 @@ function buildWorld(){
     do{x=(rng()-0.5)*160;z=(rng()-0.5)*160;y=groundH(x,z);}while(y<WATER+1);
     char.group.position.set(x,y+0.02,z);
     scene.add(char.group);
-    const n={char,powers:[pw],orbs:[],name:NAMES[i],dir:rng()*7,t:rng()*10,i,phase:rng()*6};
+    const n={char,powers:[pw],orbs:[],name:NAMES[i],dir:rng()*7,t:rng()*10,i,phase:rng()*6,
+      maxHp:maxHpFor(pw),hp:maxHpFor(pw),aggro:0,koT:0,atkCd:rng()*3};
     refreshNpc(n);
     npcs.push(n);
   }
@@ -475,7 +522,8 @@ function buildWorld(){
 buildWorld();
 
 /* ---- player --------------------------------------------------------- */
-const player={pos:new THREE.Vector3(0,groundH(0,0)+0.02,0),vy:0,yaw:0,pitch:-0.18,ground:true,speed:0};
+const player={pos:new THREE.Vector3(0,groundH(0,0)+0.02,0),vy:0,yaw:0,pitch:-0.18,ground:true,speed:0,
+  hp:100,maxHp:100,ko:0,cd:0,tf:0};   // tf = seconds left transformed
 const look={yaw:0,pitch:-0.18};
 const SENS=0.0021,SMOOTH=24;
 const me=makeChar(0xd6b58f,0x33406b,0x8fa3ff);
@@ -518,9 +566,26 @@ function muzzle(p,color){
     new THREE.MeshBasicMaterial({color,transparent:true,depthWrite:false}));
   m.position.copy(p);scene.add(m);fx.push({o:m,life:0.14,max:0.14,kind:"flash"});
 }
+function popNum(pos,n,color){
+  const cv=document.createElement("canvas");cv.width=128;cv.height=64;
+  const c=cv.getContext("2d");
+  c.font="bold 46px system-ui,sans-serif";c.textAlign="center";c.textBaseline="middle";
+  c.lineWidth=7;c.strokeStyle="#000";c.strokeText(n,64,32);
+  c.fillStyle=hex(color);c.fillText(n,64,32);
+  const s=new THREE.Sprite(new THREE.SpriteMaterial(
+    {map:new THREE.CanvasTexture(cv),transparent:true,depthWrite:false,depthTest:false}));
+  s.position.copy(pos);s.scale.set(1.7,0.85,1);scene.add(s);
+  fx.push({o:s,life:0.95,max:0.95,kind:"num"});
+}
+
 function stepFx(dt){
   for(let i=fx.length-1;i>=0;i--){
     const f=fx[i];f.life-=dt;const t=Math.max(f.life/f.max,0);
+    if(f.kind==="num"){f.o.position.y+=2.6*dt;f.o.material.opacity=Math.min(1,t*2.2);}
+    if(f.kind==="wave"){const s=f.R*(1-t)+0.6;f.o.scale.set(s,s*0.65,s);f.o.material.opacity=t*0.5;}
+    if(f.kind==="slash"){const s=1+(1-t)*0.9;f.o.scale.set(s,s,s);f.o.material.opacity=t;}
+    if(f.kind==="pillar"){f.o.scale.set(1+(1-t)*0.8,1,1+(1-t)*0.8);f.o.material.opacity=t*0.55;
+      f.o.rotation.y+=dt*4;}
     if(f.kind==="ring"){const s=1+(1-t)*7;f.o.scale.set(s,s,s);f.o.material.opacity=t;f.o.lookAt(camera.position);}
     if(f.kind==="spark"){f.v.y-=22*dt;f.o.position.addScaledVector(f.v,dt);f.o.material.opacity=t;
       f.o.rotation.x+=dt*10;f.o.rotation.y+=dt*8;}
@@ -559,14 +624,146 @@ function spawnShot(from,dir,color,mine){
   shots.push({mesh:m,dir:dir.clone(),life:2.4,color,mine,trail:0});
   muzzle(from,color);
 }
-function fire(){
-  const p=active(),[c1]=p.colors;
-  const from=player.pos.clone().add(new THREE.Vector3(0,1.35,0));
-  const dir=new THREE.Vector3(-Math.sin(player.yaw)*Math.cos(player.pitch),
-    Math.sin(player.pitch),-Math.cos(player.yaw)*Math.cos(player.pitch)).normalize();
-  from.addScaledVector(dir,1.1);
+/* ---- the six attacks, one per delivery gene ---- */
+const hazards=[],summons=[];
+const aimDir=()=>new THREE.Vector3(-Math.sin(player.yaw)*Math.cos(player.pitch),
+  Math.sin(player.pitch),-Math.cos(player.yaw)*Math.cos(player.pitch)).normalize();
+
+function attack(){
+  if(player.ko>0||player.cd>0)return;
+  const p=active(),mode=p.actDe[0],cfg=ATK[mode]||ATK.Projectile;
+  player.cd=cfg.cd*(player.tf>0?0.6:1);
+  const[c1,c2]=p.colors;
+  switch(mode){
+    case"Aura":      atkAura(p,c1,c2);break;
+    case"Touch":     atkTouch(p,c1,c2);break;
+    case"Transform": atkTransform(p,c1,c2);break;
+    case"Terrain":   atkTerrain(p,c1,c2);break;
+    case"Summon":    atkSummon(p,c1,c2);break;
+    default:         atkProjectile(p,c1);
+  }
+}
+
+function atkProjectile(p,c1){
+  const dir=aimDir();
+  const from=player.pos.clone().add(new THREE.Vector3(0,1.35,0)).addScaledVector(dir,1.1);
   spawnShot(from,dir,c1,true);shake(0.13);
   netSend({t:"shot",x:from.x,y:from.y,z:from.z,dx:dir.x,dy:dir.y,dz:dir.z,c:c1});
+}
+
+function atkAura(p,c1,c2){
+  const R=ATK.Aura.range;
+  const w=new THREE.Mesh(new THREE.SphereGeometry(1,14,10),
+    new THREE.MeshBasicMaterial({color:c2,transparent:true,opacity:0.5,
+      side:THREE.DoubleSide,depthWrite:false}));
+  w.position.copy(player.pos).add(new THREE.Vector3(0,1,0));scene.add(w);
+  fx.push({o:w,life:0.5,max:0.5,kind:"wave",R});
+  impact(player.pos.clone().add(new THREE.Vector3(0,1,0)),c1);
+  shake(0.55);
+  forEachEnemy((e,pos)=>{
+    if(pos.distanceTo(player.pos)<R) hurt(e,dmgOf(p,"Aura",elsOf(e)),c1);
+  });
+  netSend({t:"aura",x:player.pos.x,y:player.pos.y,z:player.pos.z,c:c2,r:R});
+}
+
+function atkTouch(p,c1,c2){
+  const dir=aimDir();
+  const hit=player.pos.clone().addScaledVector(dir,2.4).add(new THREE.Vector3(0,1.1,0));
+  const slash=new THREE.Mesh(new THREE.TorusGeometry(1.15,0.13,5,14,Math.PI*1.1),
+    new THREE.MeshBasicMaterial({color:c2,transparent:true,depthWrite:false}));
+  slash.position.copy(hit);slash.lookAt(camera.position);slash.rotation.z=Math.random()*3;
+  scene.add(slash);fx.push({o:slash,life:0.24,max:0.24,kind:"slash"});
+  shake(0.3);
+  let landed=false;
+  forEachEnemy((e,pos)=>{
+    if(pos.distanceTo(hit)<2.6){ hurt(e,dmgOf(p,"Touch",elsOf(e)),c1); landed=true; }
+  });
+  if(landed){shake(0.8);impact(hit,c1);}
+  netSend({t:"touch",x:hit.x,y:hit.y,z:hit.z,c:c2});
+}
+
+function atkTransform(p,c1,c2){
+  player.tf=9;
+  feed(`TRANSFORMED — ${p.elementName}`,"big");
+  whiteFlash(0.4);shake(1.4);
+  const pos=player.pos.clone().add(new THREE.Vector3(0,1.1,0));
+  impact(pos,c1);impact(pos,c2);
+  const col=new THREE.Mesh(new THREE.CylinderGeometry(1.5,1.5,9,12,1,true),
+    new THREE.MeshBasicMaterial({color:c2,transparent:true,opacity:0.55,
+      side:THREE.DoubleSide,depthWrite:false}));
+  col.position.copy(player.pos).add(new THREE.Vector3(0,4,0));scene.add(col);
+  fx.push({o:col,life:0.7,max:0.7,kind:"pillar"});
+  netSend({t:"tf",c:c2});
+}
+
+function atkTerrain(p,c1,c2){
+  const dir=aimDir();
+  const flat=new THREE.Vector3(dir.x,0,dir.z).normalize();
+  const at=player.pos.clone().addScaledVector(flat,7);
+  at.y=groundH(at.x,at.z)+0.12;
+  const disc=new THREE.Mesh(new THREE.CircleGeometry(3.6,20),
+    new THREE.MeshBasicMaterial({color:c1,transparent:true,opacity:0.45,depthWrite:false}));
+  disc.rotation.x=-Math.PI/2;disc.position.copy(at);scene.add(disc);
+  const spike=new THREE.Mesh(new THREE.ConeGeometry(0.9,2.2,6),
+    new THREE.MeshBasicMaterial({color:c2,transparent:true,opacity:0.8,depthWrite:false}));
+  spike.position.copy(at).add(new THREE.Vector3(0,1.1,0));scene.add(spike);
+  hazards.push({disc,spike,pos:at,r:3.6,life:6.5,tick:0,power:p,color:c1,mine:true});
+  shake(0.45);
+  netSend({t:"terrain",x:at.x,y:at.y,z:at.z,c1,c2});
+}
+
+function atkSummon(p,c1,c2){
+  const m=new THREE.Mesh(new THREE.IcosahedronGeometry(0.42,0),
+    new THREE.MeshBasicMaterial({color:c2}));
+  m.add(new THREE.PointLight(c1,2,9));
+  m.position.copy(player.pos).add(new THREE.Vector3(0,2.4,0));
+  scene.add(m);
+  summons.push({mesh:m,life:14,cd:0,power:p,color:c1,phase:Math.random()*6});
+  feed(`summoned a ${p.elementName} spirit`,"good");
+  impact(m.position.clone(),c2);
+  netSend({t:"summon",c1,c2});
+}
+
+/* ---- who can be hit ---- */
+const elsOf=e=>e.kind==="npc"?(npcTop(e.ref)?.actEl??[]):(e.ref.power?.actEl??[]);
+function forEachEnemy(fn){
+  for(const n of npcs) fn({kind:"npc",ref:n},n.char.group.position);
+  for(const[id,r]of remotes) fn({kind:"player",ref:r,id},r.char.group.position);
+}
+
+function hurt(e,amount,color){
+  const dmg=Math.max(1,Math.round(amount));
+  if(e.kind==="npc"){
+    const n=e.ref;
+    n.hp-=dmg;n.aggro=6;
+    popNum(n.char.group.position.clone().add(new THREE.Vector3(0,2.3,0)),dmg,color);
+    impact(n.char.group.position.clone().add(new THREE.Vector3(0,1.1,0)),color);
+    if(n.hp<=0)koNpc(n);
+  }else{
+    popNum(e.ref.char.group.position.clone().add(new THREE.Vector3(0,2.3,0)),dmg,color);
+    impact(e.ref.char.group.position.clone().add(new THREE.Vector3(0,1.1,0)),color);
+    netSend({t:"dmg",to:e.id,n:dmg,byName:S.name});
+  }
+  active().addXp(Math.round(xpFor(active().level+1)*0.02));
+}
+
+function koNpc(n){
+  n.hp=0;n.koT=9;
+  n.char.group.rotation.z=Math.PI/2.2;
+  feed(`${n.name} is down`,"good");
+  active().addXp(Math.round(xpFor(active().level+1)*0.3));
+  persist();drawHUD();
+}
+
+function takeDamage(dmg,byName){
+  if(player.ko>0)return;
+  player.hp-=Math.round(dmg*(player.tf>0?0.7:1));
+  shake(0.7);whiteFlash(0.14);
+  if(player.hp<=0){
+    player.hp=0;player.ko=6;player.tf=0;
+    feed(`You were taken down${byName?" by "+byName:""}`,"bad");
+  }
+  drawHUD();
 }
 
 /* ==================================================================== */
@@ -675,7 +872,7 @@ addEventListener("mousemove",e=>{
   look.yaw-=e.movementX*SENS;
   look.pitch=THREE.MathUtils.clamp(look.pitch-e.movementY*SENS,-1.2,0.9);
 });
-addEventListener("mousedown",()=>{if(document.pointerLockElement)fire();});
+addEventListener("mousedown",()=>{if(document.pointerLockElement)attack();});
 addEventListener("resize",()=>{camera.aspect=innerWidth/innerHeight;
   camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight);});
 
@@ -707,9 +904,16 @@ function feed(msg,cls=""){lines.unshift(`<div class="${cls}">${msg}</div>`);
 function drawHUD(){
   const p=active(),[c1,c2]=p.colors;
   const pct=p.maxed?100:(p.xp/xpFor(p.level+1))*100;
+  const hpPct=Math.max(0,player.hp/player.maxHp*100);
+  const hpCol=hpPct>50?"#7ee787":hpPct>22?"#ffd54f":"#ff7b72";
   $stats.innerHTML=`<div class="pname" style="color:${hex(c2)}">${p.name}${p.fused?" ✦":""}</div>
     <div class="dim">gen ${p.generation} · lvl ${p.level}/${p.levelCap} · potency ${myPotency()}</div>
+    <div class="bar" style="height:9px"><i style="width:${hpPct}%;background:${hpCol}"></i></div>
+    <div class="dim">${Math.max(0,Math.round(player.hp))} / ${player.maxHp} hp${
+      player.ko>0?` · <span style="color:#ff7b72">DOWN ${Math.ceil(player.ko)}s</span>`:""}${
+      player.tf>0?` · <span style="color:#ffd54f">TRANSFORMED ${Math.ceil(player.tf)}s</span>`:""}</div>
     <div class="bar"><i style="width:${pct}%;background:linear-gradient(90deg,${hex(c1)},${hex(c2)})"></i></div>
+    <div class="dim">${p.actDe[0]} attack · ${ATK[p.actDe[0]]?.cd??0.34}s cooldown</div>
     ${S.ofa
       ?`<div class="dim" style="color:#ffd54f">★ ONE FOR ALL · ${S.held.length}/${MAX_SLOTS} held · +${stockpile()} stockpile</div>
         <div class="dim">${S.stolen} taken · ${S.given} given · ${S.fusions} fused</div>`
@@ -730,7 +934,7 @@ function drawHUD(){
 /* ==================================================================== */
 const clock=new THREE.Clock();
 const fwd=new THREE.Vector3(),right=new THREE.Vector3(),move=new THREE.Vector3();
-let netClock=0,T=0;
+let netClock=0,T=0,hudClock=0;
 
 function tick(){
   const dt=Math.min(clock.getDelta(),0.05);T+=dt;
@@ -785,18 +989,60 @@ function tick(){
   }
   water.position.y=WATER+Math.sin(T*0.8)*0.06;
 
+  /* -- cooldowns, transform, knockdown -- */
+  if(player.cd>0)player.cd-=dt;
+  if(player.tf>0){
+    player.tf-=dt;
+    const k=1+0.34*Math.min(1,player.tf);
+    me.group.scale.setScalar(k);
+    auraM.opacity=0.3+Math.sin(T*11)*0.1;
+    if(player.tf<=0){me.group.scale.setScalar(1);feed("transformation ended");}
+  }
+  if(player.ko>0){
+    player.ko-=dt;
+    me.group.rotation.z=Math.PI/2.2;
+    if(player.ko<=0){
+      player.hp=player.maxHp;me.group.rotation.z=0;
+      feed("back on your feet","good");drawHUD();
+    }
+  }else me.group.rotation.z=0;
+  player.maxHp=maxHpFor(active())+stockpile()*2;
+  player.hp=Math.min(player.hp,player.maxHp);
+
   /* -- npcs -- */
   target=null;let best=REACH;
   for(const n of npcs){
-    n.t+=dt;
-    if(n.t>3){n.t=0;n.dir+=(Math.random()-0.5)*2.4;}
     const g=n.char.group;
-    const nx=g.position.x+Math.sin(n.dir)*2.4*dt,nz=g.position.z+Math.cos(n.dir)*2.4*dt;
+    if(n.koT>0){                                    // downed: lie still, then get up
+      n.koT-=dt;g.rotation.z=Math.PI/2.2;
+      placeShadow(n.char,g.position.x,g.position.z);
+      if(n.koT<=0){n.hp=n.maxHp;g.rotation.z=0;n.aggro=0;}
+      const dd=g.position.distanceTo(player.pos);
+      if(dd<best){best=dd;target={kind:"npc",ref:n,id:null};}
+      continue;
+    }
+    n.t+=dt;n.atkCd-=dt;
+    if(n.aggro>0)n.aggro-=dt;
+    const dist=g.position.distanceTo(player.pos);
+    let sp=2.4;
+    if(n.aggro>0&&n.powers.length&&player.ko<=0){    // chase and fight back
+      const to=player.pos.clone().sub(g.position);
+      n.dir=Math.atan2(to.x,to.z);
+      sp=7.5;
+      if(dist<3.2&&n.atkCd<=0){
+        n.atkCd=1.5;
+        const np=npcTop(n);
+        takeDamage(dmgOf(np,"Touch",active().actEl),n.name);
+        impact(player.pos.clone().add(new THREE.Vector3(0,1.1,0)),np.colors[0]);
+        popNum(player.pos.clone().add(new THREE.Vector3(0,2.4,0)),"!",np.colors[1]);
+      }
+    }else if(n.t>3){n.t=0;n.dir+=(Math.random()-0.5)*2.4;}
+    const nx=g.position.x+Math.sin(n.dir)*sp*dt,nz=g.position.z+Math.cos(n.dir)*sp*dt;
     const ny=groundH(nx,nz);
     if(Math.abs(nx)<125&&Math.abs(nz)<125&&ny>WATER+0.5)g.position.set(nx,ny+0.02,nz);
     else n.dir+=2.6;
     g.rotation.y=n.dir;
-    animChar(n.char,2.4,T+n.phase,false);
+    animChar(n.char,sp,T+n.phase,false);
     placeShadow(n.char,g.position.x,g.position.z);
     n.orbs.forEach((o,i)=>{
       const a=T*1.3+i*(Math.PI*2/Math.max(n.orbs.length,1))+n.phase;
@@ -814,6 +1060,8 @@ function tick(){
     r.ring.material.color.set(r.ofa?0xffd54f:0xffffff);   // gold ring = they hold One For All
     r.ring.scale.setScalar(r.ofa?1.15:1);
     r.ring.rotation.z+=dt*1.2;
+    if(r.tfT>0){r.tfT-=dt;r.char.group.scale.setScalar(1+0.34*Math.min(1,r.tfT));}
+    else r.char.group.scale.setScalar(1);
     const d=r.char.group.position.distanceTo(player.pos);
     if(d<best){best=d;target={kind:"player",ref:r,id};}
     if(r.beamP>0){r.beam??=makeBeam();
@@ -860,6 +1108,10 @@ function tick(){
       ?`<div class="pname" style="color:${hex(pw.colors[1])}">${r.name}${isP?" · player":""}${
           isP&&r.ofa?` <span style="color:#ffd54f">★</span>`:""}</div>
         <div class="dim">${pw.name} · lvl ${pw.level} · potency ${pw.potency}</div>
+        ${!isP?`<div class="bar" style="height:7px"><i style="width:${
+          Math.max(0,r.hp/r.maxHp*100)}%;background:${r.hp/r.maxHp>0.35?"#7ee787":"#ff7b72"}"></i></div>
+          <div class="dim">${Math.max(0,Math.round(r.hp))} / ${r.maxHp} hp${
+          r.koT>0?" · DOWN":""}</div>`:""}
         <div class="dim">${count} power${count>1?"s":""} held</div>
         <div class="dim">${take}${give}</div>${pass}`
       :`<div class="pname">${r.name}</div><div class="dim">powerless</div>
@@ -879,21 +1131,69 @@ function tick(){
     const gy=groundH(s.mesh.position.x,s.mesh.position.z);
     if(s.life<=0||s.mesh.position.y<gy){impact(s.mesh.position,s.color);scene.remove(s.mesh);shots.splice(i,1);continue;}
     let hit=false;
-    if(s.mine){
-      for(const n of npcs)
+    if(s.ghost){/* purely cosmetic (summon tracer) — damage already applied */}
+    else if(s.mine){
+      for(const n of npcs){
+        if(n.koT>0)continue;
         if(s.mesh.position.distanceTo(n.char.group.position.clone().setY(n.char.group.position.y+1))<1.7){
-          impact(s.mesh.position,s.color);shake(0.25);
-          active().addXp(Math.round(xpFor(active().level+1)*0.08));
-          feed(`hit ${n.name}`);persist();drawHUD();hit=true;break;}
-      if(!hit)for(const[,r]of remotes)
+          shake(0.25);hurt({kind:"npc",ref:n},dmgOf(active(),"Projectile",npcTop(n)?.actEl??[]),s.color);
+          persist();drawHUD();hit=true;break;}
+      }
+      if(!hit)for(const[id,r]of remotes)
         if(s.mesh.position.distanceTo(r.char.group.position.clone().setY(r.char.group.position.y+1))<1.7){
-          impact(s.mesh.position,s.color);shake(0.25);feed(`hit ${r.name}`);hit=true;break;}
+          shake(0.25);hurt({kind:"player",ref:r,id},dmgOf(active(),"Projectile",r.power?.actEl??[]),s.color);
+          hit=true;break;}
     }else if(s.mesh.position.distanceTo(player.pos.clone().setY(player.pos.y+1))<1.7){
-      impact(s.mesh.position,s.color);shake(0.7);whiteFlash(0.15);hit=true;}
+      impact(s.mesh.position,s.color);takeDamage(s.dmg??8);hit=true;}
     if(hit){scene.remove(s.mesh);shots.splice(i,1);}
   }
 
+  /* -- terrain hazards: damage over time inside the zone -- */
+  for(let i=hazards.length-1;i>=0;i--){
+    const h=hazards[i];
+    h.life-=dt;h.tick-=dt;
+    h.spike.rotation.y+=dt*3;
+    h.spike.position.y=h.pos.y+1.1+Math.sin(T*5)*0.15;
+    h.disc.material.opacity=0.2+Math.abs(Math.sin(T*3))*0.25;
+    if(h.tick<=0&&h.mine){
+      h.tick=0.85;
+      forEachEnemy((e,pos)=>{
+        if(pos.distanceTo(h.pos)<h.r) hurt(e,dmgOf(h.power,"Terrain",elsOf(e)),h.color);
+      });
+    }
+    if(h.life<=0){scene.remove(h.disc);scene.remove(h.spike);hazards.splice(i,1);}
+  }
+
+  /* -- summons: orbit you, shoot the nearest enemy -- */
+  for(let i=summons.length-1;i>=0;i--){
+    const s=summons[i];
+    s.life-=dt;s.cd-=dt;
+    const a=T*2+s.phase;
+    s.mesh.position.lerp(player.pos.clone().add(
+      new THREE.Vector3(Math.cos(a)*2.3,2.5,Math.sin(a)*2.3)),Math.min(1,6*dt));
+    s.mesh.rotation.y+=dt*4;
+    if(s.cd<=0){
+      let bestD=ATK.Summon.range,tgt=null,tgtE=null;
+      forEachEnemy((e,pos)=>{
+        if(e.kind==="npc"&&(e.ref.koT>0))return;
+        const d=pos.distanceTo(s.mesh.position);
+        if(d<bestD){bestD=d;tgt=pos;tgtE=e;}
+      });
+      if(tgt){
+        s.cd=1.1;
+        const dir=tgt.clone().add(new THREE.Vector3(0,1,0)).sub(s.mesh.position).normalize();
+        spawnShot(s.mesh.position.clone(),dir,s.color,false);
+        shots.at(-1).ghost=true;                       // tracer only; damage applied here
+        hurt(tgtE,dmgOf(s.power,"Summon",elsOf(tgtE)),s.color);
+      }
+    }
+    if(s.life<=0){scene.remove(s.mesh);summons.splice(i,1);}
+  }
+
   stepFx(dt);
+
+  hudClock+=dt;
+  if(hudClock>0.2){hudClock=0;drawHUD();}
 
   netClock+=dt;
   if(NET.on&&netClock>0.07){netClock=0;
