@@ -1,0 +1,593 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BLOODLINE</title>
+<style>
+  :root {
+    --bg: #0d0e14;
+    --panel: #171923;
+    --panel2: #1f2230;
+    --line: #2c3040;
+    --text: #e6e8f0;
+    --dim: #8b90a5;
+    --accent: #6c7dff;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font: 15px/1.5 system-ui, -apple-system, sans-serif;
+    padding: 16px;
+    max-width: 1100px;
+    margin: 0 auto;
+  }
+  h1 {
+    font-size: 28px; letter-spacing: 6px; font-weight: 800;
+    text-align: center; margin-bottom: 2px;
+  }
+  .sub { text-align: center; color: var(--dim); font-size: 13px; margin-bottom: 18px; }
+
+  nav { display: flex; gap: 6px; justify-content: center; margin-bottom: 18px; flex-wrap: wrap; }
+  nav button {
+    background: var(--panel); color: var(--dim); border: 1px solid var(--line);
+    padding: 8px 18px; border-radius: 8px; cursor: pointer; font-size: 14px;
+    font-family: inherit;
+  }
+  nav button.on { background: var(--accent); color: #fff; border-color: var(--accent); }
+  nav button:hover:not(.on) { color: var(--text); }
+
+  .panel {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 12px; padding: 16px; margin-bottom: 14px;
+  }
+  .panel h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 2px;
+              color: var(--dim); margin-bottom: 12px; font-weight: 600; }
+
+  /* ---- character card ---- */
+  .hero { display: flex; gap: 20px; align-items: center; flex-wrap: wrap; }
+  .avatar {
+    width: 130px; height: 130px; border-radius: 50%; flex-shrink: 0;
+    position: relative; display: grid; place-items: center;
+    font-size: 46px; font-weight: 800;
+    background: radial-gradient(circle at 35% 30%, var(--c2), var(--c1));
+    box-shadow: 0 0 34px -4px var(--c1), inset 0 0 20px rgba(0,0,0,.45);
+    animation: breathe 3.5s ease-in-out infinite;
+  }
+  .avatar::after {
+    content: ""; position: absolute; inset: -14px; border-radius: 50%;
+    border: 2px solid var(--c1); opacity: .35;
+    animation: pulse 2.6s ease-out infinite;
+  }
+  @keyframes breathe { 50% { transform: scale(1.04); } }
+  @keyframes pulse { 0% { transform: scale(.9); opacity:.5 } 100% { transform: scale(1.25); opacity:0 } }
+
+  .hero-info { flex: 1; min-width: 240px; }
+  .pname { font-size: 24px; font-weight: 700; margin-bottom: 2px; }
+  .meta { color: var(--dim); font-size: 13px; margin-bottom: 10px; }
+
+  .bar { height: 9px; background: var(--panel2); border-radius: 5px; overflow: hidden; margin: 4px 0 6px; }
+  .bar i { display: block; height: 100%; background: linear-gradient(90deg, var(--c1), var(--c2)); }
+
+  .genes { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px; }
+  .gene {
+    background: var(--panel2); border: 1px solid var(--line);
+    padding: 3px 10px; border-radius: 20px; font-size: 12px;
+  }
+  .gene.locked { opacity: .38; text-decoration: line-through; }
+  .gene.el { border-color: var(--c1); color: var(--c2); }
+
+  button.act {
+    background: var(--accent); color: #fff; border: 0; font-family: inherit;
+    padding: 10px 20px; border-radius: 8px; cursor: pointer; font-size: 14px; font-weight: 600;
+  }
+  button.act:hover { filter: brightness(1.15); }
+  button.act:disabled { background: var(--panel2); color: var(--dim); cursor: not-allowed; }
+  button.small { padding: 5px 12px; font-size: 12px; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+
+  .log { font-size: 13px; max-height: 190px; overflow-y: auto; }
+  .log div { padding: 4px 0; border-bottom: 1px solid var(--line); color: var(--dim); }
+  .log div:last-child { border: 0; }
+  .log .good { color: #7ee787; }
+  .log .big  { color: #ffd54f; font-weight: 700; }
+  .log .bad  { color: #ff7b72; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  td { padding: 9px 6px; border-bottom: 1px solid var(--line); }
+  tr:last-child td { border: 0; }
+  .dim { color: var(--dim); font-size: 12px; }
+
+  code.code {
+    background: #000; color: #7ee787; padding: 6px 12px; border-radius: 6px;
+    font-size: 15px; letter-spacing: 2px; user-select: all;
+  }
+  input {
+    background: var(--panel2); border: 1px solid var(--line); color: var(--text);
+    padding: 9px 12px; border-radius: 8px; font-family: inherit; font-size: 14px;
+  }
+  .tree { font-family: ui-monospace, monospace; font-size: 13px; line-height: 1.9; }
+  .hide { display: none; }
+</style>
+</head>
+<body>
+
+<h1>BLOODLINE</h1>
+<div class="sub">every power is inherited &middot; every player is someone's child</div>
+
+<nav>
+  <button data-tab="me" class="on">Character</button>
+  <button data-tab="world">World</button>
+  <button data-tab="family">Bloodline</button>
+</nav>
+
+<div id="app"></div>
+
+<script type="module">
+/* =======================================================================
+   GENES
+   ======================================================================= */
+
+const ELEMENTS = {
+  Fire: 10, Ice: 10, Water: 9, Earth: 9, Wind: 9, Metal: 8,
+  Lightning: 7, Toxin: 7, Sound: 6, Shadow: 5, Light: 5, Gravity: 3,
+};
+const DELIVERIES = {
+  Projectile: 10, Aura: 9, Touch: 9, Transform: 8, Terrain: 7, Summon: 5,
+};
+const MODIFIERS = {
+  Homing: 8, Lingering: 8, Piercing: 8, Chain: 7, Splitting: 7,
+  Delayed: 6, Draining: 6, Reflecting: 5, Vortex: 4, Unstable: 4,
+};
+const BODY_TRAITS = {
+  None: 26, "Glowing Eyes": 10, Scales: 8, Tail: 8, Claws: 8, Horns: 7,
+  Wings: 4, "Extra Arms": 3, "Translucent Skin": 3,
+};
+
+const COLORS = {
+  Fire: ["#ff4d2d", "#ffb03a"],      Ice: ["#3ec8f5", "#c9f4ff"],
+  Water: ["#1f7ae0", "#69c7ff"],     Earth: ["#8a6244", "#c9a27a"],
+  Wind: ["#5fbfae", "#d6f5ee"],      Metal: ["#7c8b99", "#d3dde6"],
+  Lightning: ["#e8b800", "#fff07a"], Toxin: ["#79b83c", "#cdf58a"],
+  Sound: ["#a562d6", "#e6c2ff"],     Shadow: ["#4b2d6b", "#8f6bc4"],
+  Light: ["#d9c94a", "#fffbd4"],     Gravity: ["#5b3fd4", "#a690ff"],
+};
+
+const FUSIONS = new Map([
+  ["Fire|Ice","Steam"], ["Earth|Fire","Magma"], ["Fire|Wind","Firestorm"],
+  ["Fire|Metal","Forge"], ["Fire|Water","Scald"], ["Fire|Light","Solar"],
+  ["Fire|Shadow","Emberdark"], ["Fire|Sound","Detonation"], ["Fire|Toxin","Napalm"],
+  ["Fire|Gravity","Starcore"], ["Fire|Lightning","Plasma"],
+  ["Ice|Wind","Blizzard"], ["Earth|Ice","Permafrost"], ["Ice|Water","Glacier"],
+  ["Ice|Metal","Frostiron"], ["Ice|Light","Prism"], ["Ice|Shadow","Blackfrost"],
+  ["Ice|Sound","Shatter"], ["Ice|Toxin","Chillblight"], ["Gravity|Ice","Comet"],
+  ["Ice|Lightning","Thundersnow"],
+  ["Lightning|Metal","Magnetism"], ["Lightning|Water","Stormsurge"],
+  ["Lightning|Wind","Tempest"], ["Earth|Lightning","Fulgurite"],
+  ["Lightning|Light","Flashfire"], ["Lightning|Shadow","Blackbolt"],
+  ["Lightning|Sound","Thunderclap"], ["Lightning|Toxin","Venomarc"],
+  ["Gravity|Lightning","Pulsar"],
+  ["Light|Shadow","Eclipse"], ["Shadow|Toxin","Blight"], ["Light|Sound","Resonance"],
+  ["Earth|Gravity","Tectonic"], ["Gravity|Light","Singularity"],
+  ["Gravity|Shadow","Voidwell"], ["Gravity|Metal","Collapse"],
+  ["Gravity|Sound","Rift"], ["Gravity|Toxin","Corrosion"],
+  ["Gravity|Water","Maelstrom"], ["Gravity|Wind","Downdraft"],
+  ["Toxin|Water","Miasma"], ["Earth|Metal","Ironclad"], ["Sound|Wind","Howl"],
+  ["Earth|Water","Mudflow"], ["Earth|Wind","Sandstorm"], ["Earth|Shadow","Gravesoil"],
+  ["Earth|Sound","Quake"], ["Earth|Toxin","Rot"], ["Earth|Light","Verdance"],
+  ["Metal|Water","Quicksilver"], ["Metal|Wind","Shrapnel"], ["Metal|Shadow","Blackiron"],
+  ["Metal|Sound","Bellring"], ["Metal|Toxin","Rust"], ["Light|Metal","Mirrorsteel"],
+  ["Water|Wind","Riptide"], ["Shadow|Water","Deepdark"], ["Sound|Water","Sonar"],
+  ["Light|Water","Shimmer"], ["Shadow|Wind","Whisper"], ["Light|Wind","Aurora"],
+  ["Toxin|Wind","Spore"], ["Light|Toxin","Radiance"], ["Shadow|Sound","Dirge"],
+  ["Sound|Toxin","Discord"],
+]);
+
+const UNLOCK_D2 = 20, UNLOCK_M2 = 45, UNLOCK_AWAKEN = 70;
+const BASE_CAP = 75, CAP_PER_GEN = 8, MAX_LEVEL = 100, MUTATION = 0.12;
+
+const xpFor = (lv) => Math.floor(50 * Math.pow(lv, 1.5));
+const fuse = (a, b) => FUSIONS.get([a, b].sort().join("|")) ?? `${a}/${b}`;
+const pick = (a) => a[Math.floor(Math.random() * a.length)];
+
+function weighted(table, exclude = []) {
+  const opts = Object.entries(table).filter(([k]) => !exclude.includes(k));
+  const total = opts.reduce((s, [, w]) => s + w, 0);
+  let r = Math.random() * total;
+  for (const [k, w] of opts) { r -= w; if (r <= 0) return k; }
+  return opts.at(-1)[0];
+}
+
+class Power {
+  constructor(el, de, mo, body, gen = 1) {
+    Object.assign(this, { elements: el, deliveries: de, modifiers: mo, body, generation: gen, level: 1, xp: 0 });
+  }
+  get levelCap()  { return Math.min(MAX_LEVEL, BASE_CAP + CAP_PER_GEN * (this.generation - 1)); }
+  get slots() {
+    return {
+      elements:   this.level >= UNLOCK_AWAKEN ? 2 : 1,
+      deliveries: this.level >= UNLOCK_D2 ? 2 : 1,
+      modifiers:  this.level >= UNLOCK_M2 ? 2 : 1,
+    };
+  }
+  get actEl()  { return this.elements.slice(0, this.slots.elements); }
+  get actDe()  { return this.deliveries.slice(0, this.slots.deliveries); }
+  get actMo()  { return this.modifiers.slice(0, this.slots.modifiers); }
+  get elementName() { const a = this.actEl; return a.length === 1 ? a[0] : fuse(a[0], a[1]); }
+  get colors()  { return COLORS[this.actEl[0]]; }
+  get potency() { return Math.round((10 + this.level * 1.4 + (this.generation - 1) * 3) * 10) / 10; }
+  get name()    { return `${this.actMo[0]} ${this.elementName} ${this.actDe[0]}`; }
+  get xpNeeded(){ return xpFor(this.level + 1); }
+  get maxed()   { return this.level >= this.levelCap; }
+
+  addXp(n) {
+    const events = [];
+    if (this.maxed) return events;
+    this.xp += n;
+    while (this.level < this.levelCap && this.xp >= xpFor(this.level + 1)) {
+      this.xp -= xpFor(this.level + 1);
+      this.level++;
+      if (this.level === UNLOCK_D2)     events.push(`New delivery unlocked: ${this.deliveries[1]}`);
+      if (this.level === UNLOCK_M2)     events.push(`New modifier unlocked: ${this.modifiers[1]}`);
+      if (this.level === UNLOCK_AWAKEN) events.push(`AWAKENED — second element: ${this.elements[1]}`);
+    }
+    if (this.maxed) this.xp = 0;
+    return events;
+  }
+  toJSON() { return { ...this }; }
+  static from(d) { const p = new Power(d.elements, d.deliveries, d.modifiers, d.body, d.generation); p.level = d.level; p.xp = d.xp; return p; }
+}
+
+function rollPower(gen = 1) {
+  const e1 = weighted(ELEMENTS),   e2 = weighted(ELEMENTS, [e1]);
+  const d1 = weighted(DELIVERIES), d2 = weighted(DELIVERIES, [d1]);
+  const m1 = weighted(MODIFIERS),  m2 = weighted(MODIFIERS, [m1]);
+  return new Power([e1, e2], [d1, d2], [m1, m2], weighted(BODY_TRAITS), gen);
+}
+
+function breed(a, b) {
+  const inherit = (slot, table) => {
+    const out = [];
+    for (let i = 0; i < 2; i++) {
+      if (Math.random() < MUTATION) { out.push(weighted(table, out)); continue; }
+      let g = pick([a[slot][i], b[slot][i]]);
+      if (out.includes(g)) g = weighted(table, out);
+      out.push(g);
+    }
+    return out;
+  };
+  let body = pick([a.body, b.body]);
+  if (Math.random() < MUTATION) body = weighted(BODY_TRAITS);
+  return new Power(
+    inherit("elements", ELEMENTS), inherit("deliveries", DELIVERIES),
+    inherit("modifiers", MODIFIERS), body,
+    Math.max(a.generation, b.generation) + 1
+  );
+}
+
+/* =======================================================================
+   COMBAT  — what you actually do to earn XP
+   ======================================================================= */
+
+const STRONG = {
+  Fire: "Ice", Ice: "Toxin", Toxin: "Earth", Earth: "Lightning",
+  Lightning: "Water", Water: "Fire", Metal: "Sound", Sound: "Shadow",
+  Shadow: "Light", Light: "Shadow", Wind: "Metal", Gravity: "Wind",
+};
+const MOD_POWER = {
+  Homing: 4, Lingering: 3, Piercing: 5, Chain: 4, Splitting: 3,
+  Delayed: 2, Draining: 5, Reflecting: 4, Vortex: 6, Unstable: 7,
+};
+
+function fight(me, foe) {
+  const score = (p, other) => {
+    let s = p.potency;
+    for (const m of p.actMo) s += MOD_POWER[m];
+    if (p.actEl.some((e) => other.actEl.includes(STRONG[e]))) s *= 1.25;
+    return s * (0.8 + Math.random() * 0.45);
+  };
+  const mine = score(me, foe), theirs = score(foe, me);
+  return { win: mine >= theirs, mine: Math.round(mine), theirs: Math.round(theirs) };
+}
+
+/* =======================================================================
+   SAVE / STATE
+   ======================================================================= */
+
+const NAMES = ["Kaida","Ryu","Mira","Toshi","Nova","Esse","Jax","Lumen","Vex","Ada",
+               "Orin","Sable","Kit","Bryn","Wren","Zeph","Ione","Cato","Nyx","Rho"];
+const KEY = "bloodline.save.v1";
+
+let S;
+
+function freshSave() {
+  const roster = [];
+  for (let i = 0; i < 8; i++) {
+    const pw = rollPower();
+    pw.addXp(xpFor(2) * (5 + Math.floor(Math.random() * 55)));
+    roster.push({ id: "n" + i, name: NAMES[i], power: pw.toJSON(), playtime: 20, lastChild: null });
+  }
+  return {
+    me: { id: "me", name: "You", power: rollPower().toJSON(), playtime: 0, lastChild: null, parents: null },
+    roster, codes: [], people: {}, log: [], born: Date.now(),
+  };
+}
+
+function load() {
+  try {
+    const raw = localStorage.getItem(KEY);
+    S = raw ? JSON.parse(raw) : freshSave();
+  } catch { S = freshSave(); }
+}
+const save = () => localStorage.setItem(KEY, JSON.stringify(S));
+
+const myPower = () => Power.from(S.me.power);
+const setMyPower = (p) => { S.me.power = p.toJSON(); };
+const personName = (id) => id === "me" ? "You" : (S.roster.find((r) => r.id === id)?.name ?? S.people[id]?.name ?? "someone");
+
+function log(msg, cls = "") {
+  S.log.unshift({ msg, cls });
+  S.log = S.log.slice(0, 40);
+}
+
+/* =======================================================================
+   RULES
+   ======================================================================= */
+
+const MIN_PLAYTIME = 3, COOLDOWN_H = 48, CODE_DAYS = 7, MAX_CODES = 2;
+const H = 3600e3;
+
+function canBreed(who) {
+  if (who.playtime < MIN_PLAYTIME)
+    return { ok: false, why: `needs ${MIN_PLAYTIME}h played (has ${who.playtime}h)` };
+  if (who.lastChild && Date.now() - who.lastChild < COOLDOWN_H * H)
+    return { ok: false, why: `on cooldown ${Math.ceil((COOLDOWN_H * H - (Date.now() - who.lastChild)) / H)}h` };
+  const mine = S.codes.filter((c) => c.parents.includes(who.id) && !c.claimed && Date.now() < c.expires);
+  if (mine.length >= MAX_CODES) return { ok: false, why: "unclaimed codes already out" };
+  return { ok: true };
+}
+
+function makeCode(a, b) {
+  const child = breed(Power.from(a.power), Power.from(b.power));
+  const A = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  const chunk = (n) => Array.from({ length: n }, () => A[Math.floor(Math.random() * A.length)]).join("");
+  const code = `${child.elementName.toUpperCase().replace(/[^A-Z]/g, "").slice(0, 5)}-${chunk(4)}-${chunk(2)}`;
+  S.codes.unshift({ code, power: child.toJSON(), parents: [a.id, b.id], created: Date.now(),
+                    expires: Date.now() + CODE_DAYS * 24 * H, claimed: null });
+  a.lastChild = Date.now();
+  b.lastChild = Date.now();
+  return code;
+}
+
+/* =======================================================================
+   UI
+   ======================================================================= */
+
+const app = document.getElementById("app");
+let tab = "me";
+
+document.querySelectorAll("nav button").forEach((b) => {
+  b.onclick = () => {
+    tab = b.dataset.tab;
+    document.querySelectorAll("nav button").forEach((x) => x.classList.toggle("on", x === b));
+    render();
+  };
+});
+
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+function avatarHTML(p) {
+  const [c1, c2] = p.colors;
+  return `<div class="avatar" style="--c1:${c1};--c2:${c2}">${esc(p.elementName[0])}</div>`;
+}
+
+function geneRow(p) {
+  const s = p.slots;
+  const tag = (t, cls = "") => `<span class="gene ${cls}">${esc(t)}</span>`;
+  let h = "";
+  h += tag(p.elements[0], "el");
+  h += s.elements === 2 ? tag(p.elements[1], "el") : tag(p.elements[1] + " · lvl 70", "locked");
+  h += tag(p.deliveries[0]);
+  h += s.deliveries === 2 ? tag(p.deliveries[1]) : tag(p.deliveries[1] + " · lvl 20", "locked");
+  h += tag(p.modifiers[0]);
+  h += s.modifiers === 2 ? tag(p.modifiers[1]) : tag(p.modifiers[1] + " · lvl 45", "locked");
+  if (p.body !== "None") h += tag(p.body);
+  return h;
+}
+
+function heroPanel(p, who) {
+  const [c1, c2] = p.colors;
+  const pct = p.maxed ? 100 : Math.min(100, (p.xp / p.xpNeeded) * 100);
+  return `
+  <div class="panel">
+    <div class="hero" style="--c1:${c1};--c2:${c2}">
+      ${avatarHTML(p)}
+      <div class="hero-info">
+        <div class="pname">${esc(p.name)}</div>
+        <div class="meta">generation ${p.generation} · level ${p.level} / ${p.levelCap} · potency ${p.potency} · ${who.playtime}h played</div>
+        <div class="bar"><i style="width:${pct}%"></i></div>
+        <div class="dim">${p.maxed ? "MAXED — only a child can go higher" : `${p.xp} / ${p.xpNeeded} xp`}</div>
+        <div class="genes">${geneRow(p)}</div>
+      </div>
+    </div>
+  </div>`;
+}
+
+function renderMe() {
+  const p = myPower();
+  return heroPanel(p, S.me) + `
+  <div class="panel">
+    <h2>Train</h2>
+    <div class="row">
+      <button class="act" id="train">Train (+1h)</button>
+      <button class="act" id="train10">Train hard (+8h)</button>
+      <span class="dim">training earns xp and playtime</span>
+    </div>
+  </div>
+  <div class="panel">
+    <h2>Redeem a birth code</h2>
+    <div class="row">
+      <input id="rcode" placeholder="STEAM-4F2A-9K" size="18">
+      <button class="act" id="redeem">Be born into a bloodline</button>
+    </div>
+    <div class="dim" style="margin-top:8px">replaces your character with a child of two players — higher ceiling, not a head start</div>
+  </div>
+  <div class="panel"><h2>Log</h2><div class="log">${
+    S.log.length ? S.log.map((l) => `<div class="${l.cls}">${esc(l.msg)}</div>`).join("") : '<div>nothing yet</div>'
+  }</div></div>`;
+}
+
+function renderWorld() {
+  const me = myPower();
+  const rows = S.roster.map((r) => {
+    const p = Power.from(r.power);
+    const [c1] = p.colors;
+    const cb = canBreed(r), mine = canBreed(S.me);
+    const both = cb.ok && mine.ok;
+    const why = !mine.ok ? "You: " + mine.why : (!cb.ok ? r.name + ": " + cb.why : "");
+    return `<tr>
+      <td style="width:1%"><span style="display:inline-block;width:12px;height:12px;border-radius:50%;background:${c1};box-shadow:0 0 8px ${c1}"></span></td>
+      <td><b>${esc(r.name)}</b><div class="dim">${esc(p.name)} · gen ${p.generation} · lvl ${p.level}</div></td>
+      <td style="text-align:right">
+        <button class="act small fight" data-id="${r.id}">Fight</button>
+        <button class="act small breed" data-id="${r.id}" ${both ? "" : "disabled"}>Have a child</button>
+        ${why ? `<div class="dim">${esc(why)}</div>` : ""}
+      </td></tr>`;
+  }).join("");
+
+  const codes = S.codes.length ? S.codes.map((c) => {
+    const p = Power.from(c.power);
+    const dead = Date.now() > c.expires;
+    const state = c.claimed ? `claimed by ${esc(personName(c.claimed))}`
+                : dead ? "expired"
+                : `${Math.ceil((c.expires - Date.now()) / (24 * H))}d left`;
+    return `<tr><td><code class="code">${esc(c.code)}</code>
+      <div class="dim">${esc(p.name)} · gen ${p.generation} · cap ${p.levelCap}</div></td>
+      <td style="text-align:right" class="dim">${esc(c.parents.map(personName).join(" + "))}<br>${state}</td></tr>`;
+  }).join("") : `<tr><td class="dim">no codes yet — have a child to mint one</td></tr>`;
+
+  return `
+  <div class="panel"><h2>Players — ${esc(me.name)}, lvl ${me.level}</h2>
+    <table>${rows}</table></div>
+  <div class="panel"><h2>Birth codes</h2>
+    <table>${codes}</table>
+    <div class="dim" style="margin-top:10px">give a code to a real person. one use, ${CODE_DAYS} days, then it dies.</div></div>
+  <div class="panel"><h2>Log</h2><div class="log">${
+    S.log.length ? S.log.map((l) => `<div class="${l.cls}">${esc(l.msg)}</div>`).join("") : "<div>nothing yet</div>"
+  }</div></div>`;
+}
+
+function renderFamily() {
+  const p = myPower();
+  let tree = "";
+  if (!S.me.parents) {
+    tree = `<div class="dim">You were a random first-generation power — no parents.<br>
+      Redeem a birth code to be born into a bloodline instead.</div>`;
+  } else {
+    const line = (id, d) => {
+      const per = S.people[id];
+      const pad = "&nbsp;&nbsp;".repeat(d) + (d ? "└ " : "");
+      if (!per) return `<div>${pad}${esc(personName(id))}</div>`;
+      const pw = Power.from(per.power);
+      const [c] = pw.colors;
+      let out = `<div>${pad}<span style="color:${c}">${esc(per.name)}</span> — ${esc(pw.name)} <span class="dim">(gen ${pw.generation})</span></div>`;
+      if (per.parents) for (const q of per.parents) out += line(q, d + 1);
+      return out;
+    };
+    const [c] = p.colors;
+    tree = `<div class="tree"><div><span style="color:${c}">You</span> — ${esc(p.name)} <span class="dim">(gen ${p.generation})</span></div>`
+         + S.me.parents.map((id) => line(id, 1)).join("") + `</div>`;
+  }
+  return heroPanel(p, S.me) + `<div class="panel"><h2>Bloodline</h2>${tree}
+    <div class="dim" style="margin-top:14px">
+      each generation raises your level cap by ${CAP_PER_GEN} (gen 1 caps at ${BASE_CAP}, max ${MAX_LEVEL}).<br>
+      genes pass down with a ${Math.round(MUTATION * 100)}% chance to mutate into something new.</div></div>`;
+}
+
+function render() {
+  app.innerHTML = tab === "me" ? renderMe() : tab === "world" ? renderWorld() : renderFamily();
+  wire();
+  save();
+}
+
+/* ------------------------------- actions ------------------------------ */
+
+function doTrain(hours) {
+  const p = myPower();
+  S.me.playtime += hours;
+  const gain = Math.round(xpFor(p.level + 1) * 0.28 * hours);
+  const events = p.addXp(gain);
+  setMyPower(p);
+  log(`Trained ${hours}h · +${gain} xp`);
+  events.forEach((e) => log(e, e.startsWith("AWAKENED") ? "big" : "good"));
+  if (p.maxed) log("You have hit your ceiling. Only a child can go further.", "big");
+  render();
+}
+
+function doFight(id) {
+  const foe = S.roster.find((r) => r.id === id);
+  const me = myPower(), fp = Power.from(foe.power);
+  const r = fight(me, fp);
+  S.me.playtime += 1;
+  const gain = Math.round(xpFor(me.level + 1) * (r.win ? 0.45 : 0.18));
+  const events = me.addXp(gain);
+  setMyPower(me);
+  log(`${r.win ? "Beat" : "Lost to"} ${foe.name} — ${r.mine} vs ${r.theirs} · +${gain} xp`, r.win ? "good" : "bad");
+  events.forEach((e) => log(e, e.startsWith("AWAKENED") ? "big" : "good"));
+  render();
+}
+
+function doBreed(id) {
+  const other = S.roster.find((r) => r.id === id);
+  const a = canBreed(S.me), b = canBreed(other);
+  if (!a.ok || !b.ok) { log("Cannot breed: " + (a.why || b.why), "bad"); return render(); }
+  const code = makeCode(S.me, other);
+  S.people[S.me.id] = { name: "You", power: S.me.power, parents: S.me.parents };
+  S.people[other.id] = { name: other.name, power: other.power, parents: null };
+  log(`${other.name} agreed. Birth code minted: ${code}`, "big");
+  log("Give it to a real person — one use only.", "good");
+  tab = "world";
+  document.querySelectorAll("nav button").forEach((x) => x.classList.toggle("on", x.dataset.tab === "world"));
+  render();
+}
+
+function doRedeem(raw) {
+  const code = raw.trim().toUpperCase();
+  const c = S.codes.find((x) => x.code === code);
+  if (!c)                    { log("No such code.", "bad"); return render(); }
+  if (c.claimed)             { log("That code was already used.", "bad"); return render(); }
+  if (Date.now() > c.expires){ log("That code has expired.", "bad"); return render(); }
+
+  c.claimed = "me";
+  S.me.power = c.power;
+  S.me.parents = c.parents;
+  S.me.playtime = 0;
+  S.me.lastChild = null;
+  const p = Power.from(c.power);
+  log(`Born into a bloodline — ${p.name}, generation ${p.generation}.`, "big");
+  log(`Your ceiling is now level ${p.levelCap}. You still start at 1.`, "good");
+  tab = "family";
+  document.querySelectorAll("nav button").forEach((x) => x.classList.toggle("on", x.dataset.tab === "family"));
+  render();
+}
+
+function wire() {
+  document.getElementById("train")?.addEventListener("click", () => doTrain(1));
+  document.getElementById("train10")?.addEventListener("click", () => doTrain(8));
+  document.getElementById("redeem")?.addEventListener("click", () => doRedeem(document.getElementById("rcode").value));
+  document.getElementById("rcode")?.addEventListener("keydown", (e) => { if (e.key === "Enter") doRedeem(e.target.value); });
+  document.querySelectorAll(".fight").forEach((b) => b.addEventListener("click", () => doFight(b.dataset.id)));
+  document.querySelectorAll(".breed").forEach((b) => b.addEventListener("click", () => doBreed(b.dataset.id)));
+}
+
+load();
+if (!S.log.length) {
+  const p = myPower();
+  log(`You manifested: ${p.name}`, "big");
+  log("Train and fight to grow. At 20, 45 and 70 your power changes shape.");
+}
+render();
+</script>
+</body>
+</html>

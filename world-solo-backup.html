@@ -1,0 +1,533 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>BLOODLINE — World</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { background:#0b0d13; overflow:hidden; font:14px/1.4 system-ui,sans-serif; color:#e6e8f0; }
+  canvas { display:block; }
+
+  #hud { position:fixed; inset:0; pointer-events:none; }
+  .box {
+    position:absolute; background:rgba(14,16,24,.82); border:1px solid #2c3040;
+    border-radius:10px; padding:10px 13px; backdrop-filter:blur(6px);
+  }
+  #stats { top:14px; left:14px; min-width:210px; }
+  #slots  { bottom:14px; left:14px; }
+  #target { top:14px; left:50%; transform:translateX(-50%); text-align:center; display:none; }
+  #feed   { bottom:14px; right:14px; width:270px; max-height:210px; overflow:hidden; }
+  #feed div { padding:2px 0; color:#8b90a5; font-size:13px; }
+  #feed .good { color:#7ee787; } #feed .big { color:#ffd54f; font-weight:700; } #feed .bad { color:#ff7b72; }
+
+  .pname { font-size:16px; font-weight:700; }
+  .dim { color:#8b90a5; font-size:12px; }
+  .bar { height:6px; background:#232735; border-radius:4px; overflow:hidden; margin:6px 0 3px; }
+  .bar i { display:block; height:100%; }
+
+  .slot {
+    display:inline-block; width:60px; padding:7px 4px; margin-right:5px; text-align:center;
+    border:1px solid #2c3040; border-radius:8px; background:rgba(20,23,33,.9);
+  }
+  .slot.on { border-color:#fff; box-shadow:0 0 12px -2px currentColor; }
+  .slot b { display:block; font-size:11px; margin-top:3px; }
+  .slot .k { font-size:10px; color:#8b90a5; }
+
+  #crosshair {
+    position:absolute; left:50%; top:50%; width:5px; height:5px; margin:-2.5px 0 0 -2.5px;
+    border-radius:50%; background:#fff; opacity:.65;
+  }
+  #start {
+    position:fixed; inset:0; display:grid; place-content:center; text-align:center;
+    background:rgba(8,9,14,.94); cursor:pointer; z-index:9; gap:10px;
+  }
+  #start h1 { font-size:34px; letter-spacing:8px; }
+  #start p { color:#8b90a5; }
+  kbd { background:#232735; border:1px solid #363b4d; border-radius:4px; padding:1px 6px; font-size:12px; }
+</style>
+</head>
+<body>
+
+<div id="start">
+  <h1>BLOODLINE</h1>
+  <p>ONE FOR ALL — take their power, stack it, pass it down</p>
+  <p style="margin-top:14px"><kbd>W A S D</kbd> move &nbsp; <kbd>mouse</kbd> look &nbsp; <kbd>space</kbd> jump</p>
+  <p><kbd>click</kbd> fire &nbsp; <kbd>E</kbd> steal &nbsp; <kbd>1-6</kbd> switch power</p>
+  <p style="margin-top:16px;color:#6c7dff">click to begin</p>
+</div>
+
+<div id="hud">
+  <div class="box" id="stats"></div>
+  <div class="box" id="slots"></div>
+  <div class="box" id="target"></div>
+  <div class="box" id="feed"></div>
+  <div id="crosshair"></div>
+</div>
+
+<script type="importmap">
+{ "imports": { "three": "https://unpkg.com/three@0.160.0/build/three.module.js" } }
+</script>
+
+<script type="module">
+import * as THREE from "three";
+
+/* ==================================================================== */
+/*  GENES  (same system as game.html)                                    */
+/* ==================================================================== */
+
+const ELEMENTS = { Fire:10, Ice:10, Water:9, Earth:9, Wind:9, Metal:8,
+                   Lightning:7, Toxin:7, Sound:6, Shadow:5, Light:5, Gravity:3 };
+const DELIVERIES = { Projectile:10, Aura:9, Touch:9, Transform:8, Terrain:7, Summon:5 };
+const MODIFIERS  = { Homing:8, Lingering:8, Piercing:8, Chain:7, Splitting:7,
+                     Delayed:6, Draining:6, Reflecting:5, Vortex:4, Unstable:4 };
+const BODY = { None:26, "Glowing Eyes":10, Scales:8, Tail:8, Claws:8, Horns:7,
+               Wings:4, "Extra Arms":3, "Translucent Skin":3 };
+
+const COLORS = {
+  Fire:[0xff4d2d,0xffb03a], Ice:[0x3ec8f5,0xc9f4ff], Water:[0x1f7ae0,0x69c7ff],
+  Earth:[0x8a6244,0xc9a27a], Wind:[0x5fbfae,0xd6f5ee], Metal:[0x7c8b99,0xd3dde6],
+  Lightning:[0xe8b800,0xfff07a], Toxin:[0x79b83c,0xcdf58a], Sound:[0xa562d6,0xe6c2ff],
+  Shadow:[0x4b2d6b,0x8f6bc4], Light:[0xd9c94a,0xfffbd4], Gravity:[0x5b3fd4,0xa690ff],
+};
+const FUSIONS = new Map([
+  ["Fire|Ice","Steam"],["Earth|Fire","Magma"],["Fire|Wind","Firestorm"],["Fire|Metal","Forge"],
+  ["Fire|Lightning","Plasma"],["Ice|Wind","Blizzard"],["Earth|Ice","Permafrost"],["Ice|Water","Glacier"],
+  ["Lightning|Metal","Magnetism"],["Lightning|Water","Stormsurge"],["Lightning|Wind","Tempest"],
+  ["Light|Shadow","Eclipse"],["Shadow|Toxin","Blight"],["Light|Sound","Resonance"],
+  ["Earth|Gravity","Tectonic"],["Gravity|Light","Singularity"],["Gravity|Shadow","Voidwell"],
+  ["Toxin|Water","Miasma"],["Earth|Metal","Ironclad"],["Sound|Wind","Howl"],
+  ["Earth|Water","Mudflow"],["Earth|Wind","Sandstorm"],["Metal|Water","Quicksilver"],
+  ["Water|Wind","Riptide"],["Light|Wind","Aurora"],["Fire|Water","Scald"],["Fire|Light","Solar"],
+]);
+const UNLOCK_D2=20, UNLOCK_M2=45, UNLOCK_AWAKEN=70, BASE_CAP=75, CAP_GEN=8, MAXLV=100, MUT=0.12;
+
+const xpFor = lv => Math.floor(50*Math.pow(lv,1.5));
+const fuse = (a,b) => FUSIONS.get([a,b].sort().join("|")) ?? `${a}/${b}`;
+const pick = a => a[Math.floor(Math.random()*a.length)];
+function weighted(t, ex=[]) {
+  const o = Object.entries(t).filter(([k])=>!ex.includes(k));
+  let r = Math.random()*o.reduce((s,[,w])=>s+w,0);
+  for (const [k,w] of o) { r-=w; if (r<=0) return k; }
+  return o.at(-1)[0];
+}
+
+class Power {
+  constructor(el,de,mo,body,gen=1){ Object.assign(this,{elements:el,deliveries:de,modifiers:mo,body,generation:gen,level:1,xp:0}); }
+  get levelCap(){ return Math.min(MAXLV, BASE_CAP + CAP_GEN*(this.generation-1)); }
+  get slots(){ return { elements:this.level>=UNLOCK_AWAKEN?2:1, deliveries:this.level>=UNLOCK_D2?2:1, modifiers:this.level>=UNLOCK_M2?2:1 }; }
+  get actEl(){ return this.elements.slice(0,this.slots.elements); }
+  get actDe(){ return this.deliveries.slice(0,this.slots.deliveries); }
+  get actMo(){ return this.modifiers.slice(0,this.slots.modifiers); }
+  get elementName(){ const a=this.actEl; return a.length===1?a[0]:fuse(a[0],a[1]); }
+  get colors(){ return COLORS[this.actEl[0]]; }
+  get potency(){ return Math.round((10+this.level*1.4+(this.generation-1)*3)*10)/10; }
+  get name(){ return `${this.actMo[0]} ${this.elementName} ${this.actDe[0]}`; }
+  get maxed(){ return this.level>=this.levelCap; }
+  addXp(n){ const ev=[]; if(this.maxed) return ev; this.xp+=n;
+    while(this.level<this.levelCap && this.xp>=xpFor(this.level+1)){
+      this.xp-=xpFor(this.level+1); this.level++;
+      if(this.level===UNLOCK_D2) ev.push(`delivery unlocked: ${this.deliveries[1]}`);
+      if(this.level===UNLOCK_M2) ev.push(`modifier unlocked: ${this.modifiers[1]}`);
+      if(this.level===UNLOCK_AWAKEN) ev.push(`AWAKENED — ${this.elements[1]}`);
+    } if(this.maxed) this.xp=0; return ev; }
+  toJSON(){ return {...this}; }
+  static from(d){ const p=new Power(d.elements,d.deliveries,d.modifiers,d.body,d.generation); p.level=d.level; p.xp=d.xp; return p; }
+}
+function rollPower(gen=1){
+  const e1=weighted(ELEMENTS), e2=weighted(ELEMENTS,[e1]);
+  const d1=weighted(DELIVERIES), d2=weighted(DELIVERIES,[d1]);
+  const m1=weighted(MODIFIERS), m2=weighted(MODIFIERS,[m1]);
+  return new Power([e1,e2],[d1,d2],[m1,m2],weighted(BODY),gen);
+}
+
+/* ==================================================================== */
+/*  ONE FOR ALL — the stockpile                                          */
+/* ==================================================================== */
+
+const MAX_SLOTS = 6;
+
+const S = {
+  held: [],          // Powers you carry. held[0] is your own.
+  active: 0,
+  stolen: 0,
+};
+
+function loadSave() {
+  let base = null;
+  try {
+    const raw = localStorage.getItem("bloodline.save.v1");
+    if (raw) base = Power.from(JSON.parse(raw).me.power);
+  } catch {}
+  const ofa = localStorage.getItem("bloodline.ofa.v1");
+  if (ofa) {
+    try {
+      const d = JSON.parse(ofa);
+      S.held = d.held.map(Power.from);
+      S.active = d.active ?? 0;
+      S.stolen = d.stolen ?? 0;
+      return;
+    } catch {}
+  }
+  S.held = [base ?? rollPower()];
+}
+const persist = () => localStorage.setItem("bloodline.ofa.v1",
+  JSON.stringify({ held: S.held.map(p=>p.toJSON()), active: S.active, stolen: S.stolen }));
+
+const active = () => S.held[S.active];
+/** stockpile bonus — every power you carry feeds the others */
+const stockpile = () => (S.held.length - 1) * 4;
+const myPotency = () => Math.round((active().potency + stockpile()) * 10) / 10;
+
+loadSave();
+
+/* ==================================================================== */
+/*  SCENE                                                                */
+/* ==================================================================== */
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0b0d13);
+scene.fog = new THREE.Fog(0x0b0d13, 45, 130);
+
+const camera = new THREE.PerspectiveCamera(70, innerWidth/innerHeight, 0.1, 400);
+const renderer = new THREE.WebGLRenderer({ antialias:false, powerPreference:"low-power" });
+renderer.setPixelRatio(1);                 // weak GPUs: never go above 1
+renderer.setSize(innerWidth, innerHeight);
+document.body.appendChild(renderer.domElement);
+
+scene.add(new THREE.HemisphereLight(0x8899cc, 0x14161f, 1.1));
+const sun = new THREE.DirectionalLight(0xffe9c4, 1.15);
+sun.position.set(40, 70, 25);
+scene.add(sun);
+
+/* ---- terrain -------------------------------------------------------- */
+
+const SIZE = 260, SEG = 90;
+const groundH = (x,z) =>
+  Math.sin(x*0.045)*4.2 + Math.cos(z*0.04)*3.6 +
+  Math.sin((x+z)*0.017)*6.5 + Math.cos((x-z)*0.03)*2.1;
+
+const geo = new THREE.PlaneGeometry(SIZE, SIZE, SEG, SEG);
+geo.rotateX(-Math.PI/2);
+const pos = geo.attributes.position;
+const col = [];
+const cLow = new THREE.Color(0x2f6b45), cMid = new THREE.Color(0x4f7a4a),
+      cHigh = new THREE.Color(0x8a8474), cTop = new THREE.Color(0xd8dbe4);
+for (let i=0; i<pos.count; i++) {
+  const x = pos.getX(i), z = pos.getZ(i);
+  const y = groundH(x,z);
+  pos.setY(i, y);
+  const t = THREE.MathUtils.clamp((y+10)/22, 0, 1);
+  const c = t<0.4 ? cLow.clone().lerp(cMid, t/0.4)
+          : t<0.75 ? cMid.clone().lerp(cHigh, (t-0.4)/0.35)
+          : cHigh.clone().lerp(cTop, (t-0.75)/0.25);
+  col.push(c.r, c.g, c.b);
+}
+geo.setAttribute("color", new THREE.Float32BufferAttribute(col, 3));
+geo.computeVertexNormals();
+scene.add(new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ vertexColors:true, flatShading:true })));
+
+/* ---- scenery (merged into few draw calls) --------------------------- */
+
+const trunkG = new THREE.CylinderGeometry(0.28, 0.4, 3, 5);
+const leafG  = new THREE.ConeGeometry(1.7, 4.4, 6);
+const rockG  = new THREE.DodecahedronGeometry(1.1, 0);
+const trunkM = new THREE.MeshLambertMaterial({ color:0x4a3626, flatShading:true });
+const leafM  = new THREE.MeshLambertMaterial({ color:0x35704a, flatShading:true });
+const rockM  = new THREE.MeshLambertMaterial({ color:0x6b6f7a, flatShading:true });
+
+const trees = new THREE.InstancedMesh(trunkG, trunkM, 170);
+const leaves = new THREE.InstancedMesh(leafG, leafM, 170);
+const rocks = new THREE.InstancedMesh(rockG, rockM, 90);
+const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), sc = new THREE.Vector3();
+for (let i=0; i<170; i++) {
+  const x = (Math.random()-0.5)*SIZE*0.92, z = (Math.random()-0.5)*SIZE*0.92;
+  const y = groundH(x,z), s = 0.75 + Math.random()*0.8;
+  q.setFromAxisAngle(new THREE.Vector3(0,1,0), Math.random()*7);
+  trees.setMatrixAt(i, m4.compose(new THREE.Vector3(x, y+1.5*s, z), q, sc.set(s,s,s)));
+  leaves.setMatrixAt(i, m4.compose(new THREE.Vector3(x, y+4.2*s, z), q, sc.set(s,s,s)));
+}
+for (let i=0; i<90; i++) {
+  const x = (Math.random()-0.5)*SIZE*0.9, z = (Math.random()-0.5)*SIZE*0.9;
+  const s = 0.6 + Math.random()*1.5;
+  q.setFromAxisAngle(new THREE.Vector3(Math.random(),1,Math.random()).normalize(), Math.random()*7);
+  rocks.setMatrixAt(i, m4.compose(new THREE.Vector3(x, groundH(x,z)+s*0.4, z), q, sc.set(s,s,s)));
+}
+scene.add(trees, leaves, rocks);
+
+/* ---- player --------------------------------------------------------- */
+
+const player = { pos:new THREE.Vector3(0, groundH(0,0)+2, 0), vy:0, yaw:0, pitch:-0.18, ground:true };
+
+const body = new THREE.Group();
+const torso = new THREE.Mesh(new THREE.CapsuleGeometry(0.45, 1.0, 3, 8),
+              new THREE.MeshLambertMaterial({ color:0x2b3350, flatShading:true }));
+const head  = new THREE.Mesh(new THREE.IcosahedronGeometry(0.36, 0),
+              new THREE.MeshLambertMaterial({ color:0xd6b58f, flatShading:true }));
+head.position.y = 1.05;
+const auraM = new THREE.MeshBasicMaterial({ color:0xffffff, transparent:true, opacity:0.2 });
+const aura  = new THREE.Mesh(new THREE.SphereGeometry(1.25, 10, 8), auraM);
+body.add(torso, head, aura);
+scene.add(body);
+
+/* ---- NPCs ----------------------------------------------------------- */
+
+const NAMES = ["Kaida","Ryu","Mira","Toshi","Nova","Esse","Jax","Lumen","Vex","Ada","Orin","Sable"];
+const npcs = [];
+for (let i=0; i<12; i++) {
+  const pw = rollPower();
+  pw.addXp(xpFor(2) * (4 + Math.floor(Math.random()*50)));
+  const [c1] = pw.colors;
+  const g = new THREE.Group();
+  const t = new THREE.Mesh(new THREE.CapsuleGeometry(0.42, 0.95, 3, 8),
+            new THREE.MeshLambertMaterial({ color:c1, flatShading:true }));
+  const h = new THREE.Mesh(new THREE.IcosahedronGeometry(0.34, 0),
+            new THREE.MeshLambertMaterial({ color:0xd6b58f, flatShading:true }));
+  h.position.y = 1.0;
+  const orb = new THREE.Mesh(new THREE.SphereGeometry(0.22, 8, 6),
+              new THREE.MeshBasicMaterial({ color:c1 }));
+  orb.position.y = 1.75;
+  g.add(t, h, orb);
+  const x = (Math.random()-0.5)*140, z = (Math.random()-0.5)*140;
+  g.position.set(x, groundH(x,z)+1.4, z);
+  scene.add(g);
+  npcs.push({ mesh:g, orb, power:pw, name:NAMES[i], dir:Math.random()*7, t:Math.random()*10, alive:true, robbed:false });
+}
+
+/* ---- projectiles ---------------------------------------------------- */
+
+const shots = [];
+const shotG = new THREE.SphereGeometry(0.3, 8, 6);
+function fire() {
+  const p = active();
+  const [c1] = p.colors;
+  const m = new THREE.Mesh(shotG, new THREE.MeshBasicMaterial({ color:c1 }));
+  m.position.copy(player.pos).add(new THREE.Vector3(0,0.6,0));
+  const dir = new THREE.Vector3(
+    -Math.sin(player.yaw)*Math.cos(player.pitch), Math.sin(player.pitch), -Math.cos(player.yaw)*Math.cos(player.pitch)
+  ).normalize();
+  const light = new THREE.PointLight(c1, 2.4, 12);
+  m.add(light);
+  scene.add(m);
+  shots.push({ mesh:m, dir, life:2.4, homing:p.actMo.includes("Homing") });
+}
+
+/* ==================================================================== */
+/*  INPUT                                                                */
+/* ==================================================================== */
+
+const keys = {};
+addEventListener("keydown", e => {
+  keys[e.code] = true;
+  if (e.code === "KeyE") trySteal();
+  const n = "Digit1 Digit2 Digit3 Digit4 Digit5 Digit6".split(" ").indexOf(e.code);
+  if (n >= 0 && n < S.held.length) { S.active = n; persist(); drawHUD(); }
+});
+addEventListener("keyup", e => keys[e.code] = false);
+
+const start = document.getElementById("start");
+start.onclick = () => renderer.domElement.requestPointerLock();
+document.addEventListener("pointerlockchange", () => {
+  start.style.display = document.pointerLockElement ? "none" : "grid";
+});
+addEventListener("mousemove", e => {
+  if (!document.pointerLockElement) return;
+  player.yaw   -= e.movementX * 0.0022;
+  player.pitch = THREE.MathUtils.clamp(player.pitch - e.movementY*0.0022, -1.2, 0.9);
+});
+addEventListener("mousedown", () => { if (document.pointerLockElement) fire(); });
+addEventListener("resize", () => {
+  camera.aspect = innerWidth/innerHeight; camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+
+/* ==================================================================== */
+/*  STEALING                                                             */
+/* ==================================================================== */
+
+let nearest = null;
+
+function tryStealResolve(n) {
+  const mine = myPotency() * (0.85 + Math.random()*0.4);
+  const theirs = n.power.potency * (0.85 + Math.random()*0.4);
+  return { win: mine >= theirs, mine:Math.round(mine), theirs:Math.round(theirs) };
+}
+
+function trySteal() {
+  if (!document.pointerLockElement || !nearest) return;
+  const n = nearest;
+  if (n.robbed) { feed(`${n.name} has nothing left to take.`, "bad"); return; }
+
+  const r = tryStealResolve(n);
+  if (!r.win) {
+    feed(`${n.name} resisted — ${r.mine} vs ${r.theirs}`, "bad");
+    const ev = active().addXp(Math.round(xpFor(active().level+1)*0.15));
+    ev.forEach(e => feed(e, "good"));
+    persist(); drawHUD(); return;
+  }
+
+  // take a COPY of their gene set, at level 1 — the gene, not their mastery
+  const taken = new Power([...n.power.elements], [...n.power.deliveries],
+                          [...n.power.modifiers], n.power.body, n.power.generation);
+  n.robbed = true;
+  n.orb.material.color.set(0x3a3f4d);
+  S.stolen++;
+
+  if (S.held.length < MAX_SLOTS) {
+    S.held.push(taken);
+    feed(`TOOK ${taken.name} from ${n.name}`, "big");
+    feed(`stockpile +4 potency to everything you hold`, "good");
+  } else {
+    // full: the take feeds the stockpile instead
+    S.held[0].addXp(xpFor(S.held[0].level+1) * 2);
+    feed(`slots full — ${n.name}'s power fed into your own`, "big");
+  }
+  const ev = active().addXp(Math.round(xpFor(active().level+1)*0.5));
+  ev.forEach(e => feed(e, "good"));
+  persist(); drawHUD();
+}
+
+/* ==================================================================== */
+/*  HUD                                                                  */
+/* ==================================================================== */
+
+const $stats = document.getElementById("stats");
+const $slots = document.getElementById("slots");
+const $target = document.getElementById("target");
+const $feed = document.getElementById("feed");
+const lines = [];
+const hex = n => "#" + n.toString(16).padStart(6,"0");
+
+function feed(msg, cls="") {
+  lines.unshift(`<div class="${cls}">${msg}</div>`);
+  lines.length = Math.min(lines.length, 8);
+  $feed.innerHTML = lines.join("");
+}
+
+function drawHUD() {
+  const p = active();
+  const [c1,c2] = p.colors;
+  const pct = p.maxed ? 100 : (p.xp / xpFor(p.level+1)) * 100;
+  $stats.innerHTML = `
+    <div class="pname" style="color:${hex(c2)}">${p.name}</div>
+    <div class="dim">gen ${p.generation} · lvl ${p.level}/${p.levelCap} · potency ${myPotency()}</div>
+    <div class="bar"><i style="width:${pct}%;background:linear-gradient(90deg,${hex(c1)},${hex(c2)})"></i></div>
+    <div class="dim">ONE FOR ALL · ${S.held.length}/${MAX_SLOTS} held · +${stockpile()} stockpile · ${S.stolen} taken</div>`;
+
+  $slots.innerHTML = S.held.map((h,i) => {
+    const [a,b] = h.colors;
+    return `<div class="slot ${i===S.active?"on":""}" style="color:${hex(a)}">
+      <span class="k">${i+1}</span>
+      <b style="color:${hex(b)}">${h.elementName}</b>
+      <span class="k">${i===0?"yours":"lv "+h.level}</span></div>`;
+  }).join("");
+}
+
+/* ==================================================================== */
+/*  LOOP                                                                 */
+/* ==================================================================== */
+
+const clock = new THREE.Clock();
+const fwd = new THREE.Vector3(), right = new THREE.Vector3(), move = new THREE.Vector3();
+
+function tick() {
+  const dt = Math.min(clock.getDelta(), 0.05);
+
+  /* -- movement -- */
+  fwd.set(-Math.sin(player.yaw), 0, -Math.cos(player.yaw));
+  right.set(fwd.z, 0, -fwd.x);
+  move.set(0,0,0);
+  if (keys.KeyW) move.add(fwd);
+  if (keys.KeyS) move.sub(fwd);
+  if (keys.KeyD) move.add(right);
+  if (keys.KeyA) move.sub(right);
+  const speed = (keys.ShiftLeft ? 20 : 11);
+  if (move.lengthSq()) { move.normalize().multiplyScalar(speed*dt); player.pos.add(move); }
+
+  const lim = SIZE/2 - 6;
+  player.pos.x = THREE.MathUtils.clamp(player.pos.x, -lim, lim);
+  player.pos.z = THREE.MathUtils.clamp(player.pos.z, -lim, lim);
+
+  /* -- gravity -- */
+  const floor = groundH(player.pos.x, player.pos.z) + 1.45;
+  if (keys.Space && player.ground) { player.vy = 9.5; player.ground = false; }
+  player.vy -= 26*dt;
+  player.pos.y += player.vy*dt;
+  if (player.pos.y <= floor) { player.pos.y = floor; player.vy = 0; player.ground = true; }
+
+  body.position.copy(player.pos);
+  body.rotation.y = player.yaw;
+
+  /* -- aura reflects active power -- */
+  const [ac] = active().colors;
+  auraM.color.setHex(ac);
+  auraM.opacity = 0.13 + Math.sin(performance.now()*0.003)*0.05;
+
+  /* -- camera: third person -- */
+  const camDist = 6.5;
+  camera.position.set(
+    player.pos.x + Math.sin(player.yaw)*camDist,
+    player.pos.y + 3.1 - player.pitch*4,
+    player.pos.z + Math.cos(player.yaw)*camDist
+  );
+  camera.lookAt(player.pos.x, player.pos.y + 1.1, player.pos.z);
+
+  /* -- npcs wander -- */
+  nearest = null; let best = 7;
+  for (const n of npcs) {
+    n.t += dt;
+    if (n.t > 3) { n.t = 0; n.dir += (Math.random()-0.5)*2.4; }
+    const nx = n.mesh.position.x + Math.sin(n.dir)*2.6*dt;
+    const nz = n.mesh.position.z + Math.cos(n.dir)*2.6*dt;
+    if (Math.abs(nx) < 120 && Math.abs(nz) < 120) {
+      n.mesh.position.set(nx, groundH(nx,nz)+1.4, nz);
+    } else n.dir += 2.6;
+    n.mesh.rotation.y = n.dir;
+    n.orb.position.y = 1.75 + Math.sin(performance.now()*0.004 + n.t)*0.12;
+
+    const d = n.mesh.position.distanceTo(player.pos);
+    if (d < best) { best = d; nearest = n; }
+  }
+
+  if (nearest) {
+    const np = nearest.power;
+    $target.style.display = "block";
+    $target.innerHTML = `<div class="pname" style="color:${hex(np.colors[1])}">${nearest.name}</div>
+      <div class="dim">${np.name} · lvl ${np.level} · potency ${np.potency}</div>
+      <div class="dim">${nearest.robbed ? "already taken" : "press <b>E</b> to take their power"}</div>`;
+  } else $target.style.display = "none";
+
+  /* -- projectiles -- */
+  for (let i=shots.length-1; i>=0; i--) {
+    const s = shots[i];
+    if (s.homing && nearest) {
+      const to = nearest.mesh.position.clone().sub(s.mesh.position).normalize();
+      s.dir.lerp(to, 2.2*dt).normalize();
+    }
+    s.mesh.position.addScaledVector(s.dir, 42*dt);
+    s.life -= dt;
+    const gy = groundH(s.mesh.position.x, s.mesh.position.z);
+    if (s.life <= 0 || s.mesh.position.y < gy) { scene.remove(s.mesh); shots.splice(i,1); continue; }
+    for (const n of npcs) {
+      if (s.mesh.position.distanceTo(n.mesh.position) < 1.5) {
+        scene.remove(s.mesh); shots.splice(i,1);
+        const ev = active().addXp(Math.round(xpFor(active().level+1)*0.08));
+        ev.forEach(e => feed(e, "good"));
+        feed(`hit ${n.name}`);
+        persist(); drawHUD();
+        break;
+      }
+    }
+  }
+
+  renderer.render(scene, camera);
+  requestAnimationFrame(tick);
+}
+
+drawHUD();
+feed(`You carry ${active().name}`, "big");
+feed("Find someone. Press E. Take it.");
+tick();
+</script>
+</body>
+</html>
