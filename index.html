@@ -349,40 +349,93 @@ const renderer=new THREE.WebGLRenderer({antialias:false,powerPreference:"low-pow
 renderer.setPixelRatio(1);renderer.setSize(innerWidth,innerHeight);
 document.body.appendChild(renderer.domElement);
 
-/* sky dome — cheap gradient, no textures */
-scene.add(new THREE.Mesh(new THREE.SphereGeometry(400,16,12),new THREE.ShaderMaterial({
+/* sky dome — gradient + a warm glow where the sun sits, all in one cheap shader */
+const SUNDIR=new THREE.Vector3(0.52,0.42,0.32).normalize();
+scene.add(new THREE.Mesh(new THREE.SphereGeometry(460,20,14),new THREE.ShaderMaterial({
   side:THREE.BackSide,depthWrite:false,
-  uniforms:{top:{value:new THREE.Color(0x121a33)},hor:{value:new THREE.Color(HORIZON)},
-            bot:{value:new THREE.Color(0x0a0c12)}},
+  uniforms:{top:{value:new THREE.Color(0x0e1730)},hor:{value:new THREE.Color(0x3d4f74)},
+            bot:{value:new THREE.Color(0x090b11)},glow:{value:new THREE.Color(0xffb774)},
+            sun:{value:SUNDIR}},
   vertexShader:`varying vec3 vP;void main(){vP=position;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.);}`,
-  fragmentShader:`uniform vec3 top,hor,bot;varying vec3 vP;
-    void main(){float h=normalize(vP).y;
-      vec3 c=h>0.?mix(hor,top,pow(h,0.55)):mix(hor,bot,pow(-h,0.4));
+  fragmentShader:`uniform vec3 top,hor,bot,glow,sun;varying vec3 vP;
+    void main(){vec3 d=normalize(vP);float h=d.y;
+      vec3 c=h>0.?mix(hor,top,pow(h,0.5)):mix(hor,bot,pow(-h,0.4));
+      float s=max(dot(d,normalize(sun)),0.);
+      c=mix(c,glow,pow(s,7.)*0.85);                 // broad haze near the sun
+      c+=glow*pow(s,220.)*1.6;                      // the disc itself
       gl_FragColor=vec4(c,1.);}`
 })));
+
+/* drifting cloud slabs — flat, unlit, almost free */
+const clouds=new THREE.Group();
+for(let i=0;i<26;i++){
+  const w=26+Math.random()*46;
+  const m=new THREE.Mesh(new THREE.PlaneGeometry(w,w*0.4),
+    new THREE.MeshBasicMaterial({color:0x8fa2c4,transparent:true,
+      opacity:0.06+Math.random()*0.09,depthWrite:false}));
+  m.rotation.x=-Math.PI/2;
+  m.position.set((Math.random()-0.5)*620,70+Math.random()*55,(Math.random()-0.5)*620);
+  clouds.add(m);
+}
+scene.add(clouds);
+
+/* far mountain ring for depth — never reachable, just backdrop */
+{
+  const g=new THREE.CylinderGeometry(340,395,120,44,1,true);
+  const pos=g.attributes.position;
+  for(let i=0;i<pos.count;i++){
+    const x=pos.getX(i),z=pos.getZ(i);
+    if(pos.getY(i)>0) pos.setY(i,pos.getY(i)+Math.sin(Math.atan2(z,x)*7)*26+Math.cos(Math.atan2(z,x)*13)*15);
+  }
+  g.computeVertexNormals();
+  const m=new THREE.Mesh(g,new THREE.MeshLambertMaterial(
+    {color:0x2c3550,flatShading:true,side:THREE.BackSide}));
+  m.position.y=18;scene.add(m);
+}
 
 scene.add(new THREE.HemisphereLight(0x9db0dd,0x1a1d28,1.0));
 const sun=new THREE.DirectionalLight(0xffe2b8,1.5);sun.position.set(60,90,35);scene.add(sun);
 const rim=new THREE.DirectionalLight(0x6f8fff,0.55);rim.position.set(-50,25,-45);scene.add(rim);
 
-const SIZE=280,SEG=100,WATER=-5.5;
-const groundH=(x,z)=>Math.sin(x*0.045)*4.2+Math.cos(z*0.04)*3.6+
-  Math.sin((x+z)*0.017)*6.5+Math.cos((x-z)*0.03)*2.1+Math.sin(x*0.11)*0.8;
+const SIZE=300,SEG=118,WATER=-6;
+/* layered ridges + a bowl in the middle so there's a natural arena,
+   and a lake basin off to one side */
+function groundH(x,z){
+  const d=Math.hypot(x,z);
+  let h=Math.sin(x*0.032)*5.5+Math.cos(z*0.028)*4.8          // broad rolling
+       +Math.sin((x+z)*0.013)*8.0+Math.cos((x-z)*0.021)*3.4;  // long ridges
+  h+=Math.sin(x*0.09)*1.5+Math.cos(z*0.105)*1.3;             // medium bumps
+  h+=Math.sin(x*0.31+z*0.27)*0.55;                            // fine detail
+  h+=Math.max(0,(d-95))*0.42;                                 // mountains ring the edge
+  h-=Math.exp(-((d/26)**2))*7.5;                              // central bowl = arena
+  const lx=x+78,lz=z-62;                                      // lake basin
+  h-=Math.exp(-((Math.hypot(lx,lz)/30)**2))*13;
+  return h;
+}
 
 {
   const g=new THREE.PlaneGeometry(SIZE,SIZE,SEG,SEG);g.rotateX(-Math.PI/2);
   const pos=g.attributes.position,col=[];
-  const sand=new THREE.Color(0x9c8a63),low=new THREE.Color(0x2f6b45),
-        mid=new THREE.Color(0x54804f),high=new THREE.Color(0x8a8474),top=new THREE.Color(0xdfe3ec);
+  const sand=new THREE.Color(0xb5a071),low=new THREE.Color(0x35784b),
+        mid=new THREE.Color(0x5c8a52),dry=new THREE.Color(0x7d8558),
+        rock=new THREE.Color(0x7c7a80),top=new THREE.Color(0xe8ecf4);
+  const slopeAt=(x,z)=>Math.abs(groundH(x+1.6,z)-groundH(x-1.6,z))
+                      +Math.abs(groundH(x,z+1.6)-groundH(x,z-1.6));
   for(let i=0;i<pos.count;i++){
     const x=pos.getX(i),z=pos.getZ(i),y=groundH(x,z);pos.setY(i,y);
     let c;
-    if(y<WATER+1.4)c=sand.clone();
-    else{const t=THREE.MathUtils.clamp((y-WATER)/20,0,1);
-      c=t<0.35?low.clone().lerp(mid,t/0.35)
-        :t<0.72?mid.clone().lerp(high,(t-0.35)/0.37)
-        :high.clone().lerp(top,(t-0.72)/0.28);}
-    c.offsetHSL(0,0,(Math.sin(x*12.9+z*78.2)*0.5)*0.035);   // subtle per-vertex variation
+    if(y<WATER+1.6)c=sand.clone();
+    else{
+      const t=THREE.MathUtils.clamp((y-WATER)/30,0,1);
+      c=t<0.28?low.clone().lerp(mid,t/0.28)
+        :t<0.55?mid.clone().lerp(dry,(t-0.28)/0.27)
+        :t<0.80?dry.clone().lerp(rock,(t-0.55)/0.25)
+        :rock.clone().lerp(top,(t-0.80)/0.20);
+      /* steep faces show bare rock regardless of height */
+      const s=THREE.MathUtils.clamp(slopeAt(x,z)/5.5,0,1);
+      c.lerp(rock,s*0.75);
+    }
+    c.offsetHSL(0,0,(Math.sin(x*12.9+z*78.2)*0.5)*0.045);
     col.push(c.r,c.g,c.b);
   }
   g.setAttribute("color",new THREE.Float32BufferAttribute(col,3));
@@ -422,7 +475,41 @@ function makeChar(skin,cloth,accent){
   group.add(torso,hips,head,hair,scarf,armL,armR,legL,legR,shadow);
   return {group,torso,head,armL,armR,legL,legR,shadow,scarf,hair};
 }
-function animChar(c,speed,t,airborne){
+/* one-shot attack poses — kind decides how the body throws the move */
+function setPose(c,kind,dur=0.34){c.pose=kind;c.poseT=dur;c.poseMax=dur;}
+
+function animChar(c,speed,t,airborne,dt=0){
+  if(c.poseT>0){
+    c.poseT-=dt;
+    const k=1-c.poseT/c.poseMax;                 // 0 -> 1 through the swing
+    const punch=Math.sin(Math.min(k,1)*Math.PI); // ease out and back
+    switch(c.pose){
+      case"cast":                                 // both arms thrust forward
+        c.armL.rotation.x=-1.9*punch;c.armR.rotation.x=-1.9*punch;
+        c.torso.rotation.x=0.22*punch;break;
+      case"slash":                                // one arm whips across
+        c.armR.rotation.x=-2.5*punch;c.armR.rotation.z=-1.1*punch;
+        c.armL.rotation.x=0.7*punch;
+        c.torso.rotation.y=-0.75*punch;break;
+      case"aura":                                 // crouch then throw arms wide
+        c.armL.rotation.z=1.5*punch;c.armR.rotation.z=-1.5*punch;
+        c.torso.position.y=1.02-0.22*punch;
+        c.legL.rotation.x=0.5*punch;c.legR.rotation.x=0.5*punch;break;
+      case"slam":                                 // both arms overhead, down hard
+        c.armL.rotation.x=-2.9*(1-k);c.armR.rotation.x=-2.9*(1-k);
+        c.torso.rotation.x=0.5*k;break;
+      case"roar":                                 // transform: arms back, chest out
+        c.armL.rotation.x=1.5*punch;c.armR.rotation.x=1.5*punch;
+        c.armL.rotation.z=0.7*punch;c.armR.rotation.z=-0.7*punch;
+        c.torso.rotation.x=-0.4*punch;break;
+      case"hit":                                  // flinch backwards
+        c.torso.rotation.x=-0.5*punch;
+        c.armL.rotation.x=0.9*punch;c.armR.rotation.x=0.9*punch;break;
+    }
+    if(c.poseT<=0){c.pose=null;c.torso.rotation.set(0,0,0);
+      c.armL.rotation.set(0,0,0);c.armR.rotation.set(0,0,0);}
+    return;
+  }
   const s=THREE.MathUtils.clamp(speed/11,0,1.4);
   const sw=Math.sin(t*9)*0.72*s;
   if(airborne){c.armL.rotation.x=-2.2;c.armR.rotation.x=-2.2;c.legL.rotation.x=0.4;c.legR.rotation.x=-0.3;}
@@ -439,7 +526,7 @@ function placeShadow(c,x,z){
 
 /* ---- world contents ------------------------------------------------- */
 
-let trees,leaves,leaves2,rocks,grass;
+let trees,leaves,leaves2,rocks,grass,marks;
 const npcs=[];
 const NAMES=["Kaida","Ryu","Mira","Toshi","Nova","Esse","Jax","Lumen","Vex","Ada","Orin","Sable"];
 
@@ -506,6 +593,46 @@ function buildWorld(){
   }
   scene.add(trees,leaves,leaves2,rocks,grass);
 
+  /* ---- landmarks: a ruined arena in the central bowl, crystal clusters around it ---- */
+  if(marks)scene.remove(marks);
+  marks=new THREE.Group();
+  const stoneM=new THREE.MeshLambertMaterial({color:0x8d8878,flatShading:true});
+  const stoneD=new THREE.MeshLambertMaterial({color:0x6e6a5e,flatShading:true});
+  for(let i=0;i<14;i++){                                  // broken pillar ring
+    const a=i/14*Math.PI*2,rr=19+Math.sin(i*2.3)*1.6;
+    const x=Math.cos(a)*rr,z=Math.sin(a)*rr,y=groundH(x,z);
+    const hgt=3.5+((i*7)%5)*1.5;
+    const p=new THREE.Mesh(new THREE.CylinderGeometry(0.75,0.95,hgt,7),stoneM);
+    p.position.set(x,y+hgt/2,z);p.rotation.z=(Math.sin(i*3.1))*0.06;
+    marks.add(p);
+    if(i%3===0){                                          // fallen capital
+      const cap=new THREE.Mesh(new THREE.BoxGeometry(2.2,0.7,2.2),stoneD);
+      cap.position.set(x,y+hgt+0.35,z);cap.rotation.y=i;marks.add(cap);
+    }
+  }
+  {                                                        // central dais
+    const d=new THREE.Mesh(new THREE.CylinderGeometry(7.5,8.6,1.4,20),stoneD);
+    d.position.set(0,groundH(0,0)+0.5,0);marks.add(d);
+    const d2=new THREE.Mesh(new THREE.CylinderGeometry(5.2,5.8,0.5,20),stoneM);
+    d2.position.set(0,groundH(0,0)+1.4,0);marks.add(d2);
+  }
+  for(let i=0;i<22;i++){                                   // glowing crystal clusters
+    let x,z,y,tries=0;
+    do{x=(rng()-0.5)*SIZE*0.8;z=(rng()-0.5)*SIZE*0.8;y=groundH(x,z);}
+    while((y<WATER+1||Math.hypot(x,z)<26)&&++tries<20);
+    const tint=[0x6ad4ff,0xa77bff,0x62ffbe,0xffcf5c][i%4];
+    const cm=new THREE.MeshBasicMaterial({color:tint,transparent:true,opacity:0.85});
+    for(let k=0;k<3;k++){
+      const s=0.7+rng()*1.5;
+      const c=new THREE.Mesh(new THREE.OctahedronGeometry(s,0),cm);
+      c.position.set(x+(rng()-0.5)*2.4,y+s*0.75,z+(rng()-0.5)*2.4);
+      c.rotation.set(rng(),rng(),rng());
+      marks.add(c);
+    }
+    const gl=new THREE.PointLight(tint,1.5,14);gl.position.set(x,y+2,z);marks.add(gl);
+  }
+  scene.add(marks);
+
   for(let i=0;i<12;i++){
     const pw=rollPower(1,rng);
     pw.addXp(xpFor(2)*(4+Math.floor(rng()*50)));
@@ -537,6 +664,20 @@ const crown=new THREE.Mesh(new THREE.TorusGeometry(0.44,0.055,6,20),
   new THREE.MeshBasicMaterial({color:0xffd54f}));
 crown.rotation.x=Math.PI/2;crown.position.y=2.16;me.group.add(crown);
 const myOrbs=[];
+
+/* ambient motes drifting in the air — one draw call, big atmosphere payoff */
+const MOTES=260,moteR=52;
+const motePos=new Float32Array(MOTES*3);
+for(let i=0;i<MOTES;i++){
+  motePos[i*3]=(Math.random()-0.5)*moteR*2;
+  motePos[i*3+1]=Math.random()*26;
+  motePos[i*3+2]=(Math.random()-0.5)*moteR*2;
+}
+const moteGeo=new THREE.BufferGeometry();
+moteGeo.setAttribute("position",new THREE.BufferAttribute(motePos,3));
+const motes=new THREE.Points(moteGeo,new THREE.PointsMaterial(
+  {color:0xbcd0ff,size:0.16,transparent:true,opacity:0.5,depthWrite:false}));
+scene.add(motes);
 
 function refreshMyOrbs(){
   for(const o of myOrbs)me.group.remove(o);
@@ -655,6 +796,7 @@ function attack(){
 }
 
 function atkProjectile(p,c1){
+  setPose(me,"cast",0.30);
   const dir=aimDir();
   const from=player.pos.clone().add(new THREE.Vector3(0,1.35,0)).addScaledVector(dir,1.1);
   spawnShot(from,dir,c1,true);shake(0.13);
@@ -662,6 +804,7 @@ function atkProjectile(p,c1){
 }
 
 function atkAura(p,c1,c2){
+  setPose(me,"aura",0.45);
   const R=ATK.Aura.range;
   const w=new THREE.Mesh(new THREE.SphereGeometry(1,14,10),
     new THREE.MeshBasicMaterial({color:c2,transparent:true,opacity:0.5,
@@ -678,6 +821,7 @@ function atkAura(p,c1,c2){
 
 function atkTouch(p,c1,c2,mode="Touch"){
   const big=mode==="Strike";
+  setPose(me,big?"slam":"slash",big?0.4:0.32);
   const dir=aimDir();
   const hit=player.pos.clone().addScaledVector(dir,big?2.9:2.4).add(new THREE.Vector3(0,1.1,0));
   const slash=new THREE.Mesh(new THREE.TorusGeometry(big?1.6:1.15,big?0.2:0.13,5,14,Math.PI*1.1),
@@ -694,6 +838,7 @@ function atkTouch(p,c1,c2,mode="Touch"){
 }
 
 function atkTransform(p,c1,c2){
+  setPose(me,"roar",0.65);
   player.tf=9;
   feed(`TRANSFORMED — ${p.elementName}`,"big");
   feed("click to strike while you're changed","good");
@@ -709,6 +854,7 @@ function atkTransform(p,c1,c2){
 }
 
 function atkTerrain(p,c1,c2){
+  setPose(me,"slam",0.45);
   const dir=aimDir();
   const flat=new THREE.Vector3(dir.x,0,dir.z).normalize();
   const at=player.pos.clone().addScaledVector(flat,7);
@@ -725,6 +871,7 @@ function atkTerrain(p,c1,c2){
 }
 
 function atkSummon(p,c1,c2){
+  setPose(me,"cast",0.4);
   const m=new THREE.Mesh(new THREE.IcosahedronGeometry(0.42,0),
     new THREE.MeshBasicMaterial({color:c2}));
   m.add(new THREE.PointLight(c1,2,9));
@@ -748,6 +895,11 @@ function hurt(e,amount,color){
   if(e.kind==="npc"){
     const n=e.ref;
     n.hp-=dmg;n.aggro=6;
+    setPose(n.char,"hit",0.26);
+    const kb=n.char.group.position.clone().sub(player.pos).setY(0).normalize()
+      .multiplyScalar(Math.min(2.2,dmg*0.05));
+    n.knock=(n.knock||new THREE.Vector3()).add(kb);
+    hitstop=Math.max(hitstop,dmg>25?0.075:0.035);
     popNum(n.char.group.position.clone().add(new THREE.Vector3(0,2.3,0)),dmg,color);
     impact(n.char.group.position.clone().add(new THREE.Vector3(0,1.1,0)),color);
     if(n.hp<=0)koNpc(n);
@@ -950,10 +1102,14 @@ function drawHUD(){
 /* ==================================================================== */
 const clock=new THREE.Clock();
 const fwd=new THREE.Vector3(),right=new THREE.Vector3(),move=new THREE.Vector3();
-let netClock=0,T=0,hudClock=0;
+let netClock=0,T=0,hudClock=0,hitstop=0;
 
 function tick(){
-  const dt=Math.min(clock.getDelta(),0.05);T+=dt;
+  let dt=Math.min(clock.getDelta(),0.05);
+  /* hitstop — the world stutters for a few frames on a solid hit.
+     Cheapest way to make an attack feel like it connected. */
+  if(hitstop>0){hitstop-=dt;dt*=0.16;}
+  T+=dt;
 
   const ease=1-Math.exp(-SMOOTH*dt);
   player.yaw+=(look.yaw-player.yaw)*ease;
@@ -977,7 +1133,7 @@ function tick(){
 
   me.group.position.copy(player.pos);
   me.group.rotation.y=player.yaw;
-  animChar(me,player.speed,T,!player.ground);
+  animChar(me,player.speed,T,!player.ground,dt);
   placeShadow(me,player.pos.x,player.pos.z);
 
   crown.visible=S.ofa;
@@ -1004,6 +1160,11 @@ function tick(){
     shakeAmt*=Math.pow(0.0015,dt);
   }
   water.position.y=WATER+Math.sin(T*0.8)*0.06;
+  water.position.x=player.pos.x;water.position.z=player.pos.z;   // keep the lake plane under you
+  clouds.rotation.y+=dt*0.008;
+  motes.position.set(                                            // motes follow, wrapped
+    Math.floor(player.pos.x/moteR)*moteR,0,Math.floor(player.pos.z/moteR)*moteR);
+  motes.rotation.y=T*0.02;
 
   /* -- cooldowns, transform, knockdown -- */
   if(player.cd>0)player.cd-=dt;
@@ -1057,8 +1218,13 @@ function tick(){
     const ny=groundH(nx,nz);
     if(Math.abs(nx)<125&&Math.abs(nz)<125&&ny>WATER+0.5)g.position.set(nx,ny+0.02,nz);
     else n.dir+=2.6;
+    if(n.knock&&n.knock.lengthSq()>0.001){          // shove back from the last hit
+      g.position.addScaledVector(n.knock,dt*9);
+      n.knock.multiplyScalar(Math.pow(0.02,dt));
+      g.position.y=groundH(g.position.x,g.position.z)+0.02;
+    }
     g.rotation.y=n.dir;
-    animChar(n.char,sp,T+n.phase,false);
+    animChar(n.char,sp,T+n.phase,false,dt);
     placeShadow(n.char,g.position.x,g.position.z);
     n.orbs.forEach((o,i)=>{
       const a=T*1.3+i*(Math.PI*2/Math.max(n.orbs.length,1))+n.phase;
@@ -1070,7 +1236,7 @@ function tick(){
   for(const[id,r]of remotes){
     r.char.group.position.lerp(r.target,Math.min(1,10*dt));
     r.char.group.rotation.y=r.yaw;
-    animChar(r.char,r.moving?11:0,T,false);
+    animChar(r.char,r.moving?11:0,T,false,dt);
     placeShadow(r.char,r.char.group.position.x,r.char.group.position.z);
     r.char.scarf.material.color.set(r.power.colors[1]);
     r.ring.material.color.set(r.ofa?0xffd54f:0xffffff);   // gold ring = they hold One For All
