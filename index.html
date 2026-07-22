@@ -162,8 +162,11 @@ function rollPower(gen=1,r=Math.random){
 /* ==================================================================== */
 /*  ONE FOR ALL                                                          */
 /* ==================================================================== */
-const MAX_SLOTS=6,STEAL_BASE=3.2,GIVE_TIME=1.6,REACH=7;
-const S={held:[],active:0,stolen:0,given:0,fusions:0,name:"You"};
+const MAX_SLOTS=6,STEAL_BASE=3.2,GIVE_TIME=1.6,OFA_TIME=5.5,REACH=7;
+/* ofa: only ONE person in a world holds One For All. The host starts with it.
+   Without it you have your own power and can give it away — but you cannot
+   take, and you cannot fuse. */
+const S={held:[],active:0,stolen:0,given:0,fusions:0,name:"You",ofa:true};
 
 function loadSave(){
   let base=null;
@@ -183,6 +186,7 @@ loadSave();
 
 /* combine two held powers into one fused power */
 function combine(){
+  if(!S.ofa){feed("only One For All can fuse powers together","bad");return;}
   if(S.held.length<2){feed("you need two powers to fuse","bad");return;}
   const i=S.active,j=(S.active+1)%S.held.length;
   const a=S.held[i],b=S.held[j];
@@ -233,7 +237,7 @@ function handleNet(m){
       feed(`${m.name} joined`,"big");break;
     case"hello2":ensureRemote(m.from,m.name,m.power);break;
     case"state":{const r=ensureRemote(m.from,m.name,m.power);
-      r.target.set(m.x,m.y,m.z);r.yaw=m.yaw;r.heldN=m.held;r.moving=m.mv;
+      r.target.set(m.x,m.y,m.z);r.yaw=m.yaw;r.heldN=m.held;r.moving=m.mv;r.ofa=!!m.ofa;
       if(m.power)r.power=Power.from(m.power);break;}
     case"shot":spawnShot(new THREE.Vector3(m.x,m.y,m.z),new THREE.Vector3(m.dx,m.dy,m.dz),m.c,false);break;
     case"beam":{const r=remotes.get(m.from);if(!r)break;r.beamP=m.p;r.beamKind=m.kind;break;}
@@ -247,6 +251,11 @@ function handleNet(m){
         feed(`${m.byName} TOOK your ${lost.elementName}!`,"bad");
         shake(1);whiteFlash(0.3);persist();drawHUD();}
       break;}
+    case"ofa":{if(m.to!==NET.id)break;
+      S.ofa=true;
+      feed(`${m.byName} PASSED YOU ONE FOR ALL`,"big");
+      feed("you can now take powers (E) and fuse them (C)","good");
+      whiteFlash(0.8);shake(2);drawHUD();break;}
     case"give":{if(m.to!==NET.id)break;
       if(S.held.length>=MAX_SLOTS){feed(`${m.byName} tried to give you a power — slots full`,"bad");break;}
       S.held.push(Power.from(m.power));
@@ -258,6 +267,7 @@ function startNet(mode,code){
   NET.room=mode==="host"?shortCode():code;
   NET.id="p"+Math.random().toString(36).slice(2,8);
   NET.isHost=mode==="host";
+  S.ofa=NET.isHost;              // exactly one One For All per world — the host starts holding it
   NET.peer=new Peer(mode==="host"?"bloodline-"+NET.room:"bloodline-"+NET.room+"-"+NET.id,{debug:0});
   NET.peer.on("open",()=>{
     NET.on=true;rng=mulberry32(hashStr(NET.room));
@@ -473,6 +483,10 @@ scene.add(me.group);
 const auraM=new THREE.MeshBasicMaterial({color:0xffffff,transparent:true,opacity:0.16,depthWrite:false});
 const aura=new THREE.Mesh(new THREE.IcosahedronGeometry(1.35,1),auraM);
 aura.position.y=1.05;me.group.add(aura);
+/* the mark of One For All — a gold halo only its holder wears */
+const crown=new THREE.Mesh(new THREE.TorusGeometry(0.44,0.055,6,20),
+  new THREE.MeshBasicMaterial({color:0xffd54f}));
+crown.rotation.x=Math.PI/2;crown.position.y=2.16;me.group.add(crown);
 const myOrbs=[];
 
 function refreshMyOrbs(){
@@ -564,7 +578,12 @@ const npcTop=n=>n.powers.length?n.powers[0]:null;
 function beginChan(mode){
   if(!target||chan)return;
   const isP=target.kind==="player",r=target.ref;
+  if(mode==="ofa"){
+    if(!S.ofa){feed("you don't hold One For All","bad");return;}
+    if(!isP){feed("only a real person can carry One For All","bad");return;}
+  }
   if(mode==="steal"){
+    if(!S.ofa){feed("you can't take powers — only One For All can","bad");return;}
     if(!isP&&!r.powers.length){feed(`${r.name} has nothing left`,"bad");return;}
     if(isP&&r.heldN<=1){feed(`${r.name} has only one power — you can't take their last`,"bad");return;}
     if(S.held.length>=MAX_SLOTS){feed("slots full — fuse two (C) or give one away (G)","bad");return;}
@@ -604,6 +623,18 @@ function finishSteal(){
   active().addXp(Math.round(xpFor(active().level+1)*0.5));
   cancelChan();persist();drawHUD();
 }
+function finishOfa(){
+  const c=chan;
+  S.ofa=false;
+  netSend({t:"ofa",to:c.id,byName:S.name});
+  feed(`You passed ONE FOR ALL to ${c.name}.`,"big");
+  feed("you keep what you hold, but you can no longer take or fuse","bad");
+  whiteFlash(0.75);shake(1.8);
+  const p=c.ref.char.group.position.clone().add(new THREE.Vector3(0,1.3,0));
+  impact(p,0xffd54f);impact(p,0xffffff);
+  cancelChan();drawHUD();
+}
+
 function finishGive(){
   const c=chan,gift=S.held[S.active];
   if(c.kind==="player")netSend({t:"give",to:c.id,power:gift.toJSON(),byName:S.name});
@@ -629,12 +660,14 @@ addEventListener("keydown",e=>{
   keys[e.code]=true;
   if(e.code==="KeyE")beginChan("steal");
   if(e.code==="KeyG")beginChan("give");
+  if(e.code==="KeyV")beginChan("ofa");
   if(e.code==="KeyC")combine();
   const n=["Digit1","Digit2","Digit3","Digit4","Digit5","Digit6"].indexOf(e.code);
   if(n>=0&&n<S.held.length){S.active=n;persist();drawHUD();}
 });
 addEventListener("keyup",e=>{keys[e.code]=false;
-  if((e.code==="KeyE"&&chan?.mode==="steal")||(e.code==="KeyG"&&chan?.mode==="give"))
+  if((e.code==="KeyE"&&chan?.mode==="steal")||(e.code==="KeyG"&&chan?.mode==="give")
+   ||(e.code==="KeyV"&&chan?.mode==="ofa"))
     cancelChan("released early");});
 addEventListener("mousemove",e=>{
   if(!document.pointerLockElement)return;
@@ -677,8 +710,11 @@ function drawHUD(){
   $stats.innerHTML=`<div class="pname" style="color:${hex(c2)}">${p.name}${p.fused?" ✦":""}</div>
     <div class="dim">gen ${p.generation} · lvl ${p.level}/${p.levelCap} · potency ${myPotency()}</div>
     <div class="bar"><i style="width:${pct}%;background:linear-gradient(90deg,${hex(c1)},${hex(c2)})"></i></div>
-    <div class="dim">ONE FOR ALL · ${S.held.length}/${MAX_SLOTS} held · +${stockpile()} stockpile</div>
-    <div class="dim">${S.stolen} taken · ${S.given} given · ${S.fusions} fused</div>`;
+    ${S.ofa
+      ?`<div class="dim" style="color:#ffd54f">★ ONE FOR ALL · ${S.held.length}/${MAX_SLOTS} held · +${stockpile()} stockpile</div>
+        <div class="dim">${S.stolen} taken · ${S.given} given · ${S.fusions} fused</div>`
+      :`<div class="dim">${S.held.length} power${S.held.length>1?"s":""} · you cannot take or fuse</div>
+        <div class="dim">${S.given} given</div>`}`;
   $slots.innerHTML=S.held.map((h,i)=>{const[a,b]=h.colors;
     return `<div class="slot ${i===S.active?"on":""} ${h.fused?"fus":""}" style="color:${hex(a)}">
       <span class="k">${i+1}</span><b style="color:${hex(b)}">${h.elementName}</b>
@@ -724,6 +760,9 @@ function tick(){
   animChar(me,player.speed,T,!player.ground);
   placeShadow(me,player.pos.x,player.pos.z);
 
+  crown.visible=S.ofa;
+  crown.rotation.z+=dt*1.2;
+  crown.position.y=2.16+Math.sin(T*2)*0.05;
   const[ac,ac2]=active().colors;
   auraM.color.setHex(ac);
   auraM.opacity=0.11+Math.sin(T*3)*0.045;
@@ -772,6 +811,9 @@ function tick(){
     animChar(r.char,r.moving?11:0,T,false);
     placeShadow(r.char,r.char.group.position.x,r.char.group.position.z);
     r.char.scarf.material.color.set(r.power.colors[1]);
+    r.ring.material.color.set(r.ofa?0xffd54f:0xffffff);   // gold ring = they hold One For All
+    r.ring.scale.setScalar(r.ofa?1.15:1);
+    r.ring.rotation.z+=dt*1.2;
     const d=r.char.group.position.distanceTo(player.pos);
     if(d<best){best=d;target={kind:"player",ref:r,id};}
     if(r.beamP>0){r.beam??=makeBeam();
@@ -787,18 +829,20 @@ function tick(){
     else{
       const theirs=chan.kind==="npc"?(npcTop(chan.ref)?.potency??10):chan.ref.power.potency;
       const rate=chan.mode==="give"?1/GIVE_TIME
+        :chan.mode==="ofa"?1/OFA_TIME
         :(1/STEAL_BASE)*THREE.MathUtils.clamp(myPotency()/(myPotency()+theirs)*1.9,0.28,1.5);
       chan.prog+=rate*dt;
-      const col=chan.mode==="give"?active().colors[1]:0xffffff;
+      const col=chan.mode==="give"?active().colors[1]:chan.mode==="ofa"?0xffd54f:0xffffff;
       aimBeam(myBeam,player.pos.clone().add(new THREE.Vector3(0,1.2,0)),
         tp.clone().add(new THREE.Vector3(0,1.2,0)),col,chan.prog);
       $chan.style.display="block";
-      $chan.innerHTML=`<div class="dim">${chan.mode==="steal"?"TAKING FROM":"GIVING TO"} ${chan.name}</div>
+      const verb=chan.mode==="steal"?"TAKING FROM":chan.mode==="ofa"?"PASSING ONE FOR ALL TO":"GIVING TO";
+      $chan.innerHTML=`<div class="dim">${verb} ${chan.name}</div>
         <div class="bar"><i style="width:${Math.min(100,chan.prog*100)}%;background:${
-          chan.mode==="steal"?"#fff":hex(active().colors[1])}"></i></div>
+          chan.mode==="steal"?"#fff":chan.mode==="ofa"?"#ffd54f":hex(active().colors[1])}"></i></div>
         <div class="dim">${Math.round(Math.min(100,chan.prog*100))}%</div>`;
       if(chan.kind==="player")netSend({t:"beam",p:chan.prog,kind:chan.mode});
-      if(chan.prog>=1)chan.mode==="steal"?finishSteal():finishGive();
+      if(chan.prog>=1)chan.mode==="steal"?finishSteal():chan.mode==="ofa"?finishOfa():finishGive();
     }
   }
 
@@ -808,15 +852,18 @@ function tick(){
     const pw=isP?r.power:npcTop(r);
     const canGive=S.held.length>1;
     const give=canGive?` &nbsp; hold <b>G</b> give ${active().elementName}`:"";
+    const take=S.ofa?`hold <b>E</b> take`:`<span style="opacity:.5">you cannot take</span>`;
+    const pass=(S.ofa&&isP)?`<div class="dim" style="color:#ffd54f">hold <b>V</b> pass ONE FOR ALL</div>`:"";
     const count=isP?r.heldN:r.powers.length;
     $target.style.display="block";
     $target.innerHTML=pw
-      ?`<div class="pname" style="color:${hex(pw.colors[1])}">${r.name}${isP?" · player":""}</div>
+      ?`<div class="pname" style="color:${hex(pw.colors[1])}">${r.name}${isP?" · player":""}${
+          isP&&r.ofa?` <span style="color:#ffd54f">★</span>`:""}</div>
         <div class="dim">${pw.name} · lvl ${pw.level} · potency ${pw.potency}</div>
         <div class="dim">${count} power${count>1?"s":""} held</div>
-        <div class="dim">hold <b>E</b> take${give}</div>`
+        <div class="dim">${take}${give}</div>${pass}`
       :`<div class="pname">${r.name}</div><div class="dim">powerless</div>
-        <div class="dim">${canGive?`hold <b>G</b> give ${active().elementName}`:"nothing spare to give"}</div>`;
+        <div class="dim">${canGive?`hold <b>G</b> give ${active().elementName}`:"nothing spare to give"}</div>${pass}`;
   }else if(!chan)$target.style.display="none";
 
   /* -- shots -- */
@@ -851,7 +898,7 @@ function tick(){
   netClock+=dt;
   if(NET.on&&netClock>0.07){netClock=0;
     netSend({t:"state",name:S.name,x:player.pos.x,y:player.pos.y,z:player.pos.z,
-      yaw:player.yaw,held:S.held.length,mv:player.speed>0,power:active().toJSON()});}
+      yaw:player.yaw,held:S.held.length,mv:player.speed>0,ofa:S.ofa,power:active().toJSON()});}
 
   renderer.render(scene,camera);
   requestAnimationFrame(tick);
